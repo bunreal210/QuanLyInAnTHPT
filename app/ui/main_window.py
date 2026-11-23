@@ -52,8 +52,21 @@ def play_alert_sound():
         pass
 
 MODERN_STYLE = """
-/* Modern Clean Theme for QuanLyInAnTHPT */
+/* Modern Clean Light Theme for QuanLyInAnTHPT */
 QMainWindow {
+    background-color: #f8fafc;
+}
+QWidget#centralWidget {
+    background-color: #f8fafc;
+}
+QScrollArea {
+    background-color: #f8fafc;
+    border: none;
+}
+QScrollArea > QWidget {
+    background-color: #f8fafc;
+}
+QScrollArea > QWidget > QWidget {
     background-color: #f8fafc;
 }
 QWidget {
@@ -91,65 +104,91 @@ QTabBar::tab:selected {
 QGroupBox {
     font-weight: bold;
     font-size: 10pt;
-    color: #1e3a8a;
-    border: 1px solid #e2e8f0;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
     border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 14px;
+    margin-top: 18px;
+    padding-top: 20px;
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-bottom: 14px;
     background-color: #ffffff;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 8px;
-    left: 10px;
-    background-color: #ffffff;
+    left: 14px;
+    padding: 3px 12px;
+    background-color: #2563eb;
+    color: #ffffff;
+    border-radius: 4px;
+    font-weight: bold;
+    font-size: 9.5pt;
 }
-QLineEdit, QSpinBox, QComboBox, QTextEdit {
+QLineEdit, QSpinBox, QComboBox {
     background-color: #ffffff;
     border: 1px solid #cbd5e1;
     border-radius: 6px;
-    padding: 5px 8px;
+    padding: 6px 10px;
     font-size: 10pt;
     color: #0f172a;
+    min-height: 22px;
 }
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
     border: 2px solid #2563eb;
-    background-color: #f8fafc;
+    background-color: #ffffff;
+}
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #0f172a;
+    selection-background-color: #dbeafe;
+    selection-color: #1e3a8a;
+    border: 1px solid #cbd5e1;
 }
 QTableWidget {
     background-color: #ffffff;
     alternate-background-color: #f8fafc;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #cbd5e1;
     border-radius: 6px;
-    gridline-color: #f1f5f9;
+    gridline-color: #e2e8f0;
     selection-background-color: #dbeafe;
     selection-color: #1e3a8a;
+    color: #0f172a;
+}
+QTableCornerButton::section {
+    background-color: #f1f5f9;
+    border: 1px solid #cbd5e1;
 }
 QHeaderView::section {
     background-color: #f1f5f9;
     color: #334155;
     font-weight: bold;
     border: none;
+    border-right: 1px solid #e2e8f0;
     border-bottom: 2px solid #cbd5e1;
-    padding: 6px;
+    padding: 8px;
+    height: 28px;
 }
 QProgressBar {
     border: 1px solid #cbd5e1;
     border-radius: 6px;
     text-align: center;
     background-color: #f1f5f9;
-    height: 18px;
+    height: 20px;
     font-size: 9pt;
     font-weight: bold;
+    color: #0f172a;
 }
 QProgressBar::chunk {
     background-color: #2563eb;
     border-radius: 5px;
 }
+QSplitter::handle {
+    background-color: #cbd5e1;
+}
 QStatusBar {
     background-color: #ffffff;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid #cbd5e1;
     color: #475569;
 }
 """
@@ -441,6 +480,8 @@ class FileDropListWidget(QTableWidget):
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.setColumnHidden(4, True) # Ẩn cột đường dẫn gốc
+        self.verticalHeader().setDefaultSectionSize(32)
+        self.setAlternatingRowColors(True)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -586,6 +627,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.progress_queue)
 
         self.table_queue = FileDropListWidget()
+        self.table_queue.setMinimumHeight(220)
         self.table_queue.files_dropped.connect(self.add_files_to_queue)
         self.table_queue.itemSelectionChanged.connect(self.on_queue_selection_changed)
         left_layout.addWidget(self.table_queue)
@@ -878,6 +920,9 @@ class MainWindow(QMainWindow):
         self.table_history.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_history.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table_history.setColumnCount(12)
+        self.table_history.setMinimumHeight(260)
+        self.table_history.verticalHeader().setDefaultSectionSize(32)
+        self.table_history.setAlternatingRowColors(True)
         self.table_history.setHorizontalHeaderLabels([
             "Mã", "Ngày giờ", "Máy tính", "Người in", "Lớp", "Tên tài liệu",
             "Trang", "Bản", "Tờ", "Thành tiền", "Trạng thái", "Thanh toán"
@@ -943,6 +988,9 @@ class MainWindow(QMainWindow):
         self.table_report.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_report.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table_report.setColumnCount(8)
+        self.table_report.setMinimumHeight(260)
+        self.table_report.verticalHeader().setDefaultSectionSize(32)
+        self.table_report.setAlternatingRowColors(True)
         self.table_report.setHorizontalHeaderLabels([
             "Mã", "Họ và tên / Lớp", "Loại", "Tổ / Khối", "Số lượt in",
             "Tổng số tờ", "Tổng tiền", "Còn nợ (đ)"
@@ -999,6 +1047,9 @@ class MainWindow(QMainWindow):
         self.table_prices.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table_prices.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table_prices.setColumnCount(7)
+        self.table_prices.setMinimumHeight(240)
+        self.table_prices.verticalHeader().setDefaultSectionSize(32)
+        self.table_prices.setAlternatingRowColors(True)
         self.table_prices.setHorizontalHeaderLabels([
             "Mã", "Khổ giấy", "Màu sắc", "Chế độ mặt", "Máy in áp dụng", "Đơn giá hiện tại (đ)", "Đơn vị"
         ])
@@ -1113,16 +1164,22 @@ class MainWindow(QMainWindow):
     # ==================== TAB 6: CÀI ĐẶT & QUẢN LÝ DANH MỤC ====================
     def init_tab_settings(self):
         layout = QVBoxLayout(self.tab_settings)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setObjectName("settingsScroll")
         container = QWidget()
+        container.setObjectName("settingsContainer")
         vbox = QVBoxLayout(container)
-        vbox.setSpacing(15)
+        vbox.setContentsMargins(16, 16, 16, 16)
+        vbox.setSpacing(18)
 
         # --- PHẦN 1: CẤU HÌNH HỆ THỐNG ---
         grp_sys = QGroupBox("1. Thư mục lưu trữ & File Excel tổng hợp")
         sys_grid = QGridLayout(grp_sys)
+        sys_grid.setContentsMargins(16, 22, 16, 16)
+        sys_grid.setSpacing(12)
 
         sys_grid.addWidget(QLabel("Thư mục lưu trữ bản sao đề in (DeDaIn):"), 0, 0)
         self.txt_cfg_storage = QLineEdit(get_setting("storage_dir", "D:\\DeDaIn"))
@@ -1142,6 +1199,8 @@ class MainWindow(QMainWindow):
         # --- PHẦN 2: DANH MỤC LỚP & SĨ SỐ ---
         grp_class = QGroupBox("2. Quản lý Danh mục Lớp học & Sĩ số (Hỗ trợ Nhập từ Excel)")
         class_vbox = QVBoxLayout(grp_class)
+        class_vbox.setContentsMargins(16, 22, 16, 16)
+        class_vbox.setSpacing(12)
 
         # Nút thao tác lớp
         class_btn_box = QHBoxLayout()
@@ -1163,7 +1222,10 @@ class MainWindow(QMainWindow):
         self.table_classes.setColumnCount(5)
         self.table_classes.setHorizontalHeaderLabels(["ID", "Khối", "Tên lớp", "Sĩ số học sinh", "Ghi chú"])
         self.table_classes.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table_classes.setMaximumHeight(220)
+        self.table_classes.setMinimumHeight(200)
+        self.table_classes.setMaximumHeight(260)
+        self.table_classes.verticalHeader().setDefaultSectionSize(32)
+        self.table_classes.setAlternatingRowColors(True)
         self.table_classes.itemSelectionChanged.connect(self.on_class_table_selected)
         class_vbox.addWidget(self.table_classes)
 
@@ -1186,6 +1248,8 @@ class MainWindow(QMainWindow):
         # --- PHẦN 3: DANH MỤC GIÁO VIÊN ---
         grp_teacher = QGroupBox("3. Quản lý Danh mục Giáo viên (Hỗ trợ Nhập từ Excel)")
         teacher_vbox = QVBoxLayout(grp_teacher)
+        teacher_vbox.setContentsMargins(16, 22, 16, 16)
+        teacher_vbox.setSpacing(12)
 
         # Nút thao tác giáo viên
         teacher_btn_box = QHBoxLayout()
@@ -1207,7 +1271,10 @@ class MainWindow(QMainWindow):
         self.table_teachers.setColumnCount(4)
         self.table_teachers.setHorizontalHeaderLabels(["ID", "Họ và tên giáo viên", "Tổ chuyên môn", "Ghi chú"])
         self.table_teachers.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table_teachers.setMaximumHeight(220)
+        self.table_teachers.setMinimumHeight(200)
+        self.table_teachers.setMaximumHeight(260)
+        self.table_teachers.verticalHeader().setDefaultSectionSize(32)
+        self.table_teachers.setAlternatingRowColors(True)
         teacher_vbox.addWidget(self.table_teachers)
 
         # Thêm thủ công 1 giáo viên
@@ -1228,6 +1295,8 @@ class MainWindow(QMainWindow):
         # --- PHẦN 4: SAO LƯU & KHÔI PHỤC DỮ LIỆU ---
         grp_backup = QGroupBox("4. An toàn dữ liệu: Sao lưu & Khôi phục CSDL")
         backup_vbox = QVBoxLayout(grp_backup)
+        backup_vbox.setContentsMargins(16, 22, 16, 16)
+        backup_vbox.setSpacing(12)
         backup_btn_box = QHBoxLayout()
         self.btn_backup_now = QPushButton("💾 Sao lưu dữ liệu CSDL ngay (.bak)")
         self.btn_backup_now.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold; padding: 8px 14px;")
@@ -1240,6 +1309,15 @@ class MainWindow(QMainWindow):
         backup_btn_box.addWidget(self.btn_restore_now)
         backup_btn_box.addStretch()
         backup_vbox.addLayout(backup_btn_box)
+
+        lbl_backup_info = QLabel("Khuyên dùng: Nên bấm sao lưu định kỳ hoặc trước khi cài lại Windows / chuyển máy.")
+        lbl_backup_info.setStyleSheet("color: #64748b; font-style: italic;")
+        backup_vbox.addWidget(lbl_backup_info)
+
+        vbox.addWidget(grp_backup)
+
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
 
         lbl_backup_info = QLabel("Khuyên dùng: Nên bấm sao lưu định kỳ hoặc trước khi cài lại Windows / chuyển máy.")
         lbl_backup_info.setStyleSheet("color: #64748b; font-style: italic;")

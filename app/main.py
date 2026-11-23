@@ -68,6 +68,25 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Quản lý in ấn đề - THPT")
 
+    # Ép kiểu giao diện Fusion và bảng màu Light Theme nhất quán, bất chấp Windows Dark Mode
+    app.setStyle("Fusion")
+    from PySide6.QtGui import QPalette, QColor
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor("#f8fafc"))
+    palette.setColor(QPalette.WindowText, QColor("#0f172a"))
+    palette.setColor(QPalette.Base, QColor("#ffffff"))
+    palette.setColor(QPalette.AlternateBase, QColor("#f1f5f9"))
+    palette.setColor(QPalette.ToolTipBase, QColor("#ffffff"))
+    palette.setColor(QPalette.ToolTipText, QColor("#0f172a"))
+    palette.setColor(QPalette.Text, QColor("#0f172a"))
+    palette.setColor(QPalette.Button, QColor("#f8fafc"))
+    palette.setColor(QPalette.ButtonText, QColor("#0f172a"))
+    palette.setColor(QPalette.BrightText, QColor("#dc2626"))
+    palette.setColor(QPalette.Link, QColor("#2563eb"))
+    palette.setColor(QPalette.Highlight, QColor("#2563eb"))
+    palette.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    app.setPalette(palette)
+
     # Font chu he thong dep cho tieng Viet tren Windows
     font = QFont("Segoe UI", 10)
     app.setFont(font)
