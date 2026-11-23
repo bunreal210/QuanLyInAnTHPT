@@ -45,9 +45,10 @@ Người dùng không rành công nghệ chỉ cần tải bản chạy sẵn:
 - Tự động tính số tờ thực tế và thành tiền; hỗ trợ sửa tay hoặc tích chọn *"Miễn phí (Việc chung trường)"*.
 - Nút **"Lưu không in (Ghi sổ thủ công)"** khi bản in đã thực hiện bằng cách khác.
 
-### 2. 📖 Chức năng In Booklet (Sách gập đôi ghim giữa)
-- Tự động dàn trang PDF Booklet chuẩn quốc tế: Tự bù trang trắng để chia hết cho 4, tự ghép trang cuối và trang đầu trên cùng một mặt.
-- Lệnh in gửi ra ở chế độ **2 mặt lật cạnh ngắn (Duplex Short)**. In xong chỉ cần gập đôi tờ giấy ở giữa là thành tập sách/đề thi chuẩn đẹp.
+### 2. 📖 Hai chế độ in linh hoạt & In Booklet (Sách gập đôi)
+- **Chế độ 1 - In nhanh tự động (`🖨️ IN NHANH TỰ ĐỘNG`):** In ngầm 1 chạm không cần mở cửa sổ phụ, tự động áp dụng cấu hình phần mềm (số bản, 2 mặt, màu/đen trắng, khổ giấy) và trừ tiền vào sổ Excel tức thì.
+- **Chế độ 2 - Mở cửa sổ in Windows (`🖥️ MỞ CỬA SỔ IN WINDOWS`):** Mở trực tiếp hộp thoại in gốc quen thuộc của Windows / Microsoft Word / Excel. Người dùng có thể bấm vào *Properties/Preferences* để vào thẳng driver máy in (Ricoh, Canon, HP...) chọn khay giấy, giấy dày, tùy chọn máy in nâng cao như bình thường.
+- **Chức năng In Booklet chuẩn:** Tự bù trang trắng để chia hết cho 4, tự ghép trang theo thuật toán Saddle-Stitch Imposition (ghép 2 trang A4 lên 1 mặt A3 hoặc 2 trang A5 lên 1 mặt A4). Lệnh in gửi ra ở chế độ **2 mặt lật cạnh ngắn (Duplex Short)**, in xong chỉ cần gập đôi tờ giấy ở giữa là thành tập sách/đề thi chuẩn đẹp.
 - Tự động tính toán số tờ: 1 tờ giấy in được 4 trang tài liệu.
 
 ### 3. 🏫 Quản lý 42 Lớp & Tự động điền Sĩ số
