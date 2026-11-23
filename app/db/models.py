@@ -304,6 +304,19 @@ def create_print_job(job_data: dict) -> int:
     finally:
         conn.close()
 
+def update_print_job_status(job_id: int, status: str, error_message: str = None):
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE print_jobs SET status = ?, error_message = ? WHERE id = ?",
+                (status, error_message, job_id)
+            )
+            # Cap nhat vao hang doi dong bo Excel
+            conn.execute("INSERT INTO sync_queue (job_id, operation, status) VALUES (?, 'update', 'pending')", (job_id,))
+    finally:
+        conn.close()
+
 # ==================== EXCEL IMPORT & TEMPLATES ====================
 def import_classes_from_excel(file_path: str) -> tuple[int, str]:
     """
