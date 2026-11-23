@@ -125,6 +125,17 @@ def _seed_default_data(conn):
     for key, val in default_settings:
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, val))
 
+    # Tu dong don dep sumatra_path neu dang tro vao duong dan temp _MEI cu hoac khong ton tai
+    try:
+        cursor.execute("SELECT value FROM settings WHERE key = 'sumatra_path'")
+        row = cursor.fetchone()
+        if row and row[0]:
+            val = str(row[0])
+            if "_MEI" in val or not os.path.exists(val):
+                cursor.execute("UPDATE settings SET value = '' WHERE key = 'sumatra_path'")
+    except Exception:
+        pass
+
     # 3. Nap bang gia mac dinh (to hop chung: NULL cho printer_id nghia la ap dung moi may)
     cursor.execute("SELECT COUNT(*) FROM price_rules")
     if cursor.fetchone()[0] == 0:

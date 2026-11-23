@@ -160,9 +160,11 @@ def find_or_extract_sumatra(custom_path: str = None) -> str:
         bundle_dir = getattr(sys, '_MEIPASS', '')
         if bundle_dir:
             candidates.append(os.path.join(bundle_dir, "tools", "SumatraPDF.exe"))
+            candidates.append(os.path.join(bundle_dir, "_internal", "tools", "SumatraPDF.exe"))
             candidates.append(os.path.join(bundle_dir, "SumatraPDF.exe"))
         exe_dir = os.path.dirname(sys.executable)
         candidates.append(os.path.join(exe_dir, "tools", "SumatraPDF.exe"))
+        candidates.append(os.path.join(exe_dir, "_internal", "tools", "SumatraPDF.exe"))
         candidates.append(os.path.join(exe_dir, "SumatraPDF.exe"))
 
     # 2. Thu muc du an goc
