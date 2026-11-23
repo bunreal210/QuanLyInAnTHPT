@@ -17,7 +17,8 @@ from app.services.converter import (
 )
 from app.services.booklet import create_booklet_pdf
 from app.services.printer import (
-    list_windows_printers, build_sumatra_print_settings, execute_sumatra_print
+    list_windows_printers, build_sumatra_print_settings, execute_sumatra_print,
+    open_windows_print_dialog
 )
 from app.services.storage import organize_and_save_files
 from app.services.pricing import calculate_print_cost
@@ -84,23 +85,34 @@ class FileDropListWidget(QTableWidget):
 class BackgroundPrintWorker(QThread):
     finished_signal = Signal(dict)
 
-    def __init__(self, job_data, sumatra_exe, settings_str):
+    def __init__(self, job_data, sumatra_exe, settings_str, print_mode="silent"):
         super().__init__()
         self.job_data = job_data
         self.sumatra_exe = sumatra_exe
         self.settings_str = settings_str
+        self.print_mode = print_mode
 
     def run(self):
-        # 1. Gui lenh in toi SumatraPDF
-        res = execute_sumatra_print(
-            self.sumatra_exe,
-            self.job_data['printer_name'],
-            self.job_data['print_file_path'],
-            self.settings_str
-        )
+        if self.print_mode == "dialog":
+            is_booklet = (self.job_data.get('duplex') == 3)
+            res = open_windows_print_dialog(
+                file_path=self.job_data.get('original_file_path'),
+                pdf_path=self.job_data.get('print_file_path'),
+                printer_name=self.job_data.get('printer_name'),
+                prefer_original_app=not is_booklet
+            )
+        else:
+            # 1. Gui lenh in toi SumatraPDF (in ngam)
+            res = execute_sumatra_print(
+                self.sumatra_exe,
+                self.job_data['printer_name'],
+                self.job_data['print_file_path'],
+                self.settings_str
+            )
         self.finished_signal.emit({
             "job_id": self.job_data.get('job_id'),
-            "result": res
+            "result": res,
+            "mode": self.print_mode
         })
 
 
@@ -384,17 +396,26 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(nav_box)
 
         # Nút hành động lớn
-        self.btn_print_now = QPushButton("🖨️ IN NGAY FILE NÀY")
-        self.btn_print_now.setFixedHeight(48)
+        self.btn_print_now = QPushButton("🖨️ IN NHANH TỰ ĐỘNG (SILENT)")
+        self.btn_print_now.setFixedHeight(46)
         self.btn_print_now.setStyleSheet("""
-            QPushButton { background-color: #059669; color: white; font-size: 13pt; font-weight: bold; border-radius: 6px; }
+            QPushButton { background-color: #059669; color: white; font-size: 12pt; font-weight: bold; border-radius: 6px; }
             QPushButton:hover { background-color: #047857; }
         """)
         self.btn_print_now.clicked.connect(self.execute_current_print)
         right_layout.addWidget(self.btn_print_now)
 
+        self.btn_print_windows = QPushButton("🖥️ MỞ CỬA SỔ IN WINDOWS (PRINT DIALOG)")
+        self.btn_print_windows.setFixedHeight(42)
+        self.btn_print_windows.setStyleSheet("""
+            QPushButton { background-color: #4f46e5; color: white; font-size: 11pt; font-weight: bold; border-radius: 6px; }
+            QPushButton:hover { background-color: #4338ca; }
+        """)
+        self.btn_print_windows.clicked.connect(self.execute_windows_dialog_print)
+        right_layout.addWidget(self.btn_print_windows)
+
         self.btn_save_only = QPushButton("💾 LƯU KHÔNG IN (GHI SỔ THỦ CÔNG)")
-        self.btn_save_only.setFixedHeight(36)
+        self.btn_save_only.setFixedHeight(34)
         self.btn_save_only.setStyleSheet("background-color: #3b82f6; color: white; font-weight: bold; border-radius: 4px;")
         self.btn_save_only.clicked.connect(self.execute_save_only)
         right_layout.addWidget(self.btn_save_only)
@@ -1231,18 +1252,21 @@ class MainWindow(QMainWindow):
 
     # ==================== EXECUTE PRINT & SAVE ====================
     def execute_current_print(self):
-        self._process_job(should_print=True)
+        self._process_job(mode="silent")
+
+    def execute_windows_dialog_print(self):
+        self._process_job(mode="dialog")
 
     def execute_save_only(self):
-        self._process_job(should_print=False)
+        self._process_job(mode="save_only")
 
-    def _process_job(self, should_print=True):
+    def _process_job(self, mode="silent"):
         if self.selected_file_index < 0 or self.selected_file_index >= len(self.current_queue):
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn một file trong hàng đợi trước!")
             return
 
         item = self.current_queue[self.selected_file_index]
-        if not item.get('convert_ok') or not item.get('pdf_path'):
+        if mode != "dialog" and (not item.get('convert_ok') or not item.get('pdf_path')):
             QMessageBox.critical(self, "Lỗi chuyển đổi", f"File này chưa được chuyển đổi thành công:\n{item.get('convert_error')}")
             return
 
@@ -1264,15 +1288,17 @@ class MainWindow(QMainWindow):
                 return
 
         # 1. Trích xuất khoảng trang nếu có
-        src_pdf = item['pdf_path']
+        src_pdf = item.get('pdf_path')
         range_str = self.txt_page_range.text().strip()
-        selected_pages = parse_page_ranges(range_str, item['pages'])
+        item_pages = item.get('pages', 1)
+        selected_pages = parse_page_ranges(range_str, item_pages) if item_pages else [1]
 
         ready_pdf = src_pdf
-        if len(selected_pages) < item['pages']:
-            custom_range_pdf = os.path.splitext(src_pdf)[0] + "_range.pdf"
-            extract_pages_to_new_pdf(src_pdf, custom_range_pdf, selected_pages)
-            ready_pdf = custom_range_pdf
+        if src_pdf and os.path.exists(src_pdf):
+            if len(selected_pages) < item_pages:
+                custom_range_pdf = os.path.splitext(src_pdf)[0] + "_range.pdf"
+                extract_pages_to_new_pdf(src_pdf, custom_range_pdf, selected_pages)
+                ready_pdf = custom_range_pdf
 
         # 2. Xử lý in Booklet nếu người dùng chọn
         duplex_val = self.cb_duplex.currentData()
@@ -1281,14 +1307,18 @@ class MainWindow(QMainWindow):
         is_booklet = (duplex_val == 3)
 
         if is_booklet:
-            booklet_pdf = os.path.splitext(ready_pdf)[0] + "_booklet.pdf"
-            try:
-                create_booklet_pdf(ready_pdf, booklet_pdf, target_paper=paper)
-                ready_pdf = booklet_pdf
-                # In booklet luon la 2 mat lat canh ngan (duplexshort)
-                duplex_for_printer = 2
-            except Exception as b_err:
-                QMessageBox.critical(self, "Lỗi tạo Booklet", f"Không thể dàn trang Booklet: {b_err}")
+            if ready_pdf and os.path.exists(ready_pdf):
+                booklet_pdf = os.path.splitext(ready_pdf)[0] + "_booklet.pdf"
+                try:
+                    create_booklet_pdf(ready_pdf, booklet_pdf, target_paper=paper)
+                    ready_pdf = booklet_pdf
+                    # In booklet luon la 2 mat lat canh ngan (duplexshort)
+                    duplex_for_printer = 2
+                except Exception as b_err:
+                    QMessageBox.critical(self, "Lỗi tạo Booklet", f"Không thể dàn trang Booklet: {b_err}")
+                    return
+            else:
+                QMessageBox.critical(self, "Lỗi", "In Booklet yêu cầu file cần được chuyển đổi qua PDF để dàn trang.")
                 return
         else:
             duplex_for_printer = duplex_val
@@ -1349,7 +1379,7 @@ class MainWindow(QMainWindow):
             "override_reason": override_reason,
             "saved_path": saved_orig,
             "pdf_path": saved_pdf,
-            "status": "pending" if should_print else "printed",
+            "status": "pending" if mode != "save_only" else "printed",
             "paid_status": "unpaid" if not is_free else "paid",
             "note": self.txt_job_note.text().strip(),
             "print_file_path": ready_pdf
@@ -1359,7 +1389,7 @@ class MainWindow(QMainWindow):
         job_data['job_id'] = job_id
 
         # 6. Nếu chỉ ghi sổ (không in qua máy)
-        if not should_print:
+        if mode == "save_only":
             update_print_job_status(job_id, "printed")
             append_job_to_excel(job_id)
             QMessageBox.information(self, "Thành công", f"Đã ghi sổ thủ công lượt in #{job_id} thành công!\nSố tờ: {cost_info['total_sheets']} | Thành tiền: {final_amount:,.0f} đ")
@@ -1367,7 +1397,7 @@ class MainWindow(QMainWindow):
             self.load_report_data()
             return
 
-        # 7. Gửi lệnh in ngầm qua SumatraPDF
+        # 7. Gửi lệnh in (ngầm qua SumatraPDF hoặc mở cửa sổ Windows)
         from app.services.printer import find_or_extract_sumatra
         sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
 
@@ -1380,30 +1410,53 @@ class MainWindow(QMainWindow):
         )
 
         self.btn_print_now.setEnabled(False)
-        self.btn_print_now.setText("Đang gửi lệnh in tới máy in...")
+        self.btn_print_windows.setEnabled(False)
+        if mode == "dialog":
+            self.btn_print_windows.setText("Đang mở cửa sổ in Windows...")
+        else:
+            self.btn_print_now.setText("Đang gửi lệnh in tới máy in...")
 
-        self.worker = BackgroundPrintWorker(job_data, sumatra_exe, settings_str)
+        self.worker = BackgroundPrintWorker(job_data, sumatra_exe, settings_str, print_mode=mode)
         self.worker.finished_signal.connect(self.on_print_job_finished)
         self.worker.start()
 
     def on_print_job_finished(self, data):
         self.btn_print_now.setEnabled(True)
-        self.btn_print_now.setText("🖨️ IN NGAY FILE NÀY")
+        self.btn_print_now.setText("🖨️ IN NHANH TỰ ĐỘNG (SILENT)")
+        self.btn_print_windows.setEnabled(True)
+        self.btn_print_windows.setText("🖥️ MỞ CỬA SỔ IN WINDOWS (PRINT DIALOG)")
         job_id = data.get("job_id")
         res = data.get("result", {})
+        mode = data.get("mode", "silent")
 
         if res.get("success"):
             update_print_job_status(job_id, "printed")
             append_job_to_excel(job_id)
-            QMessageBox.information(
-                self, "In thành công",
-                f"Đã gửi lệnh in #{job_id} tới máy in thành công!\n"
-                f"- Bản sao file đã lưu vào thư mục có tổ chức\n"
-                f"- Đã ghi nhật ký và đồng bộ Excel."
-            )
+            if mode == "dialog":
+                QMessageBox.information(
+                    self, "Hoàn thành",
+                    f"Đã xử lý in qua cửa sổ Windows cho lượt #{job_id}!\n"
+                    f"- Bản sao file đã lưu vào thư mục có tổ chức\n"
+                    f"- Đã ghi nhật ký và đồng bộ Excel."
+                )
+            else:
+                QMessageBox.information(
+                    self, "In thành công",
+                    f"Đã gửi lệnh in #{job_id} tới máy in thành công!\n"
+                    f"- Bản sao file đã lưu vào thư mục có tổ chức\n"
+                    f"- Đã ghi nhật ký và đồng bộ Excel."
+                )
         else:
-            update_print_job_status(job_id, "error", res.get("error"))
-            QMessageBox.critical(self, "Lỗi in", f"Lỗi gửi lệnh in #{job_id}:\n{res.get('error')}\n(Bản ghi vẫn được lưu trong lịch sử để bạn thử lại)")
+            if res.get("cancelled"):
+                update_print_job_status(job_id, "cancelled", res.get("error"))
+                QMessageBox.information(self, "Thông báo", "Bạn đã đóng hoặc hủy thao tác trong cửa sổ in.")
+            else:
+                update_print_job_status(job_id, "error", res.get("error"))
+                QMessageBox.critical(self, "Lỗi in", f"Lỗi gửi lệnh in #{job_id}:\n{res.get('error')}\n(Bản ghi vẫn được lưu trong lịch sử để bạn thử lại)")
+
+        self.load_history_data()
+        self.load_report_data()
+        self.update_recent_requester_buttons()
 
         self.load_history_data()
         self.load_report_data()

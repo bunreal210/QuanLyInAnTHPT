@@ -143,11 +143,17 @@ class PrinterTestWindow(QWidget):
         self.btn_preview_pdf.clicked.connect(self.preview_sample_pdf)
         action_layout.addWidget(self.btn_preview_pdf)
 
-        self.btn_send_print = QPushButton("2. GỬI LỆNH IN THỬ TỚI MÁY ĐÃ CHỌN")
+        self.btn_send_print = QPushButton("2. GỬI LỆNH IN THỬ TỰ ĐỘNG")
         self.btn_send_print.setFixedHeight(38)
-        self.btn_send_print.setStyleSheet("background-color: #059669; color: white; font-weight: bold; font-size: 11pt;")
+        self.btn_send_print.setStyleSheet("background-color: #059669; color: white; font-weight: bold; font-size: 10pt;")
         self.btn_send_print.clicked.connect(self.send_test_print)
         action_layout.addWidget(self.btn_send_print)
+
+        self.btn_send_dialog = QPushButton("3. MỞ CỬA SỔ IN WINDOWS (TEST)")
+        self.btn_send_dialog.setFixedHeight(38)
+        self.btn_send_dialog.setStyleSheet("background-color: #4f46e5; color: white; font-weight: bold; font-size: 10pt;")
+        self.btn_send_dialog.clicked.connect(self.send_test_dialog)
+        action_layout.addWidget(self.btn_send_dialog)
 
         main_layout.addLayout(action_layout)
 
@@ -297,7 +303,7 @@ class PrinterTestWindow(QWidget):
 
     def on_print_finished(self, result: dict):
         self.btn_send_print.setEnabled(True)
-        self.btn_send_print.setText("2. GỬI LỆNH IN THỬ TỚI MÁY ĐÃ CHỌN")
+        self.btn_send_print.setText("2. GỬI LỆNH IN THỬ TỰ ĐỘNG")
 
         if result.get("success"):
             self.log(f"[KẾT QUẢ] THÀNH CÔNG! {result.get('message')}")
@@ -316,3 +322,19 @@ class PrinterTestWindow(QWidget):
         else:
             self.log(f"[KẾT QUẢ] THẤT BẠI! Lỗi: {result.get('error')}")
             QMessageBox.critical(self, "Lỗi in ấn", f"Không thể gửi lệnh in:\n{result.get('error')}")
+
+    def send_test_dialog(self):
+        win_name = self.cb_printers.currentText()
+        self.ensure_sample_pdf()
+        self.log("\n------------------------------------------------------------")
+        self.log(f"[MỞ CỬA SỔ IN WINDOWS] Đang mở hộp thoại in Windows cho file test...")
+        from app.services.printer import open_windows_print_dialog
+        res = open_windows_print_dialog(
+            file_path=self.test_pdf_path,
+            pdf_path=self.test_pdf_path,
+            printer_name=win_name
+        )
+        if res.get('success'):
+            self.log(f"[KẾT QUẢ] {res.get('message')}")
+        else:
+            self.log(f"[THÔNG BÁO] {res.get('error') or res.get('message')}")
