@@ -145,6 +145,65 @@ def apply_devmode_settings(printer_name: str, duplex: int = 1, color: int = 0, p
         logger.warning(f"Khong the set DEVMODE cho {printer_name}: {e}")
     return None
 
+def find_or_extract_sumatra(custom_path: str = None) -> str:
+    """
+    Tim duong dan thuc te cua SumatraPDF.exe theo thu tu uu tien.
+    Tu dong tim trong bundle PyInstaller, thu muc exe, thu muc tools hoac AppData.
+    Neu hoan toan chua co, tu dong tai ve thu muc AppData de su dung ngay lap tuc.
+    """
+    candidates = []
+    if custom_path and os.path.exists(custom_path) and os.path.getsize(custom_path) > 100000:
+        return custom_path
+
+    # 1. Thu muc PyInstaller bundle
+    if getattr(sys, 'frozen', False):
+        bundle_dir = getattr(sys, '_MEIPASS', '')
+        if bundle_dir:
+            candidates.append(os.path.join(bundle_dir, "tools", "SumatraPDF.exe"))
+            candidates.append(os.path.join(bundle_dir, "SumatraPDF.exe"))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, "tools", "SumatraPDF.exe"))
+        candidates.append(os.path.join(exe_dir, "SumatraPDF.exe"))
+
+    # 2. Thu muc du an goc
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidates.append(os.path.join(base_dir, "tools", "SumatraPDF.exe"))
+    candidates.append(os.path.join(base_dir, "SumatraPDF.exe"))
+
+    # 3. Thu muc AppData nguoi dung
+    app_data_dir = os.path.join(os.environ.get("LOCALAPPDATA", "C:\\"), "QuanLyInAnTHPT", "tools")
+    try:
+        os.makedirs(app_data_dir, exist_ok=True)
+    except Exception:
+        pass
+    appdata_sumatra = os.path.join(app_data_dir, "SumatraPDF.exe")
+    candidates.append(appdata_sumatra)
+
+    # 4. Program Files he thong
+    candidates.append(r"C:\Program Files\SumatraPDF\SumatraPDF.exe")
+    candidates.append(r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe")
+
+    for p in candidates:
+        if p and os.path.exists(p) and os.path.getsize(p) > 100000:
+            return p
+
+    # Neu chua co bat cu dau, thu tu dong tai ve AppData
+    try:
+        import urllib.request, zipfile, io, shutil
+        url = "https://www.sumatrapdfreader.org/dl/rel/3.5.2/SumatraPDF-3.5.2-64.zip"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            z = zipfile.ZipFile(io.BytesIO(resp.read()))
+            for name in z.namelist():
+                if name.lower().endswith(".exe"):
+                    with z.open(name) as src, open(appdata_sumatra, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    return appdata_sumatra
+    except Exception as e:
+        logger.warning(f"Khong the tu dong tai SumatraPDF: {e}")
+
+    return candidates[0] if candidates else ""
+
 def execute_sumatra_print(
     sumatra_exe: str,
     printer_name: str,
@@ -155,11 +214,24 @@ def execute_sumatra_print(
     Goi SumatraPDF chay ngam de in ra may in chi dinh.
     Cau truc: SumatraPDF.exe -print-to "TEN_MAY_IN" -print-settings "settings" -silent "file.pdf"
     """
+    if not sumatra_exe or not os.path.exists(sumatra_exe) or os.path.getsize(sumatra_exe) < 100000:
+        sumatra_exe = find_or_extract_sumatra(sumatra_exe)
+
     if not os.path.exists(sumatra_exe):
-        return {
-            "success": False,
-            "error": f"Khong tim thay file SumatraPDF.exe tai: {sumatra_exe}"
-        }
+        # Phuong an du phong cuoi cung: In qua Windows Shell (win32api ShellExecute)
+        try:
+            import win32api
+            win32api.ShellExecute(0, "printto", os.path.abspath(pdf_path), f'"{printer_name}"', ".", 0)
+            return {
+                "success": True,
+                "command": f"ShellExecute printto {printer_name}",
+                "message": f"Da gui lenh in truc tiep qua Windows toi may in: {printer_name}"
+            }
+        except Exception as shell_err:
+            return {
+                "success": False,
+                "error": f"Khong tim thay SumatraPDF.exe va loi goi Windows Shell: {shell_err}"
+            }
 
     if not os.path.exists(pdf_path):
         return {

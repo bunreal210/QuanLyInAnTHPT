@@ -264,13 +264,8 @@ class PrinterTestWindow(QWidget):
             return
 
         self.ensure_sample_pdf()
-        sumatra_exe = get_setting("sumatra_path")
-        if not sumatra_exe or not os.path.exists(sumatra_exe):
-            sumatra_exe = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tools", "SumatraPDF.exe")
-
-        if not os.path.exists(sumatra_exe):
-            QMessageBox.critical(self, "Lỗi", f"Không tìm thấy SumatraPDF.exe tại {sumatra_exe}. Hãy kiểm tra thư mục tools/")
-            return
+        from app.services.printer import find_or_extract_sumatra
+        sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
 
         paper = self.cb_test_paper.currentText()
         duplex = self.cb_test_duplex.currentData()

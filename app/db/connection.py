@@ -117,7 +117,7 @@ def _seed_default_data(conn):
         ('save_converted_pdf', '1'), # 1: luu ca file PDF da chuyen doi, 0: chi luu file goc
         ('warn_high_pages_threshold', '100'), # Canh bao neu so trang vuot nguon
         ('warn_high_copies_threshold', '100'), # Canh bao neu so ban in qua lon
-        ('sumatra_path', os.path.join(APP_DIR, "tools", "SumatraPDF.exe")),
+        ('sumatra_path', ''), # De trong de he thong tu dong nhan dien duong dan chinh xac theo runtime
         ('libreoffice_path', ''), # Tu do tim neu de trong
         ('backup_dir', os.path.join(APP_DIR, "backups")),
         ('auto_backup_days', '30')

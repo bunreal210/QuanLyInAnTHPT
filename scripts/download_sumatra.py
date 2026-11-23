@@ -25,7 +25,7 @@ def ensure_sumatra():
 
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             for member in zip_ref.namelist():
-                if member.lower().endswith("sumatrapdf.exe"):
+                if member.lower().endswith(".exe"):
                     with zip_ref.open(member) as source, open(SUMATRA_EXE, "wb") as target:
                         shutil.copyfileobj(source, target)
                     break

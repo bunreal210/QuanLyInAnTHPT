@@ -1368,9 +1368,8 @@ class MainWindow(QMainWindow):
             return
 
         # 7. Gửi lệnh in ngầm qua SumatraPDF
-        sumatra_exe = get_setting("sumatra_path")
-        if not sumatra_exe or not os.path.exists(sumatra_exe):
-            sumatra_exe = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tools", "SumatraPDF.exe")
+        from app.services.printer import find_or_extract_sumatra
+        sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
 
         settings_str = build_sumatra_print_settings(
             copies=copies,

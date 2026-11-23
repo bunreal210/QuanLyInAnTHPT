@@ -8,6 +8,8 @@ build/
 dist/
 *.spec
 release/
+tools/SumatraPDF.exe
+tools/*.pdf
 
 # Log files
 *.log
