@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QComboBox, QPushButton, QCheckBox, QGroupBox, QTextEdit,
     QMessageBox, QSpinBox, QFileDialog, QTableWidget, QTableWidgetItem,
-    QHeaderView, QTabWidget, QSplitter, QFrame, QScrollArea, QAbstractItemView
+    QHeaderView, QTabWidget, QSplitter, QFrame, QScrollArea, QAbstractItemView,
+    QProgressBar, QDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize
 from PySide6.QtGui import QFont, QIcon, QPixmap, QColor
@@ -27,8 +28,11 @@ from app.services.cloud_sync import (
     get_cloud_sync_folder, set_cloud_sync_folder, sync_both_ways
 )
 from app.services.reports import (
-    get_dashboard_summary, get_report_by_requesters, mark_jobs_as_paid
+    get_dashboard_summary, get_report_by_requesters, mark_jobs_as_paid,
+    get_jobs_for_requester
 )
+from app.services.receipt import generate_receipt_pdf
+from app.services.backup import create_database_backup, restore_database_from_backup
 from app.db.connection import get_machine_name, get_connection
 from app.db.models import (
     get_requesters, search_requesters, get_recent_requester_ids,
@@ -40,6 +44,386 @@ from app.db.models import (
     import_teachers_from_excel, create_teachers_template_excel
 )
 
+def play_alert_sound():
+    try:
+        import winsound
+        winsound.MessageBeep(winsound.MB_ICONASTERISK)
+    except Exception:
+        pass
+
+MODERN_STYLE = """
+/* Modern Clean Theme for QuanLyInAnTHPT */
+QMainWindow {
+    background-color: #f8fafc;
+}
+QWidget {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #1e293b;
+    font-size: 10pt;
+}
+QTabWidget::pane {
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background-color: #ffffff;
+    top: -1px;
+}
+QTabBar::tab {
+    background-color: #f1f5f9;
+    color: #475569;
+    font-weight: 600;
+    font-size: 10.5pt;
+    padding: 10px 18px;
+    margin-right: 4px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    border: 1px solid #cbd5e1;
+    border-bottom: none;
+}
+QTabBar::tab:hover {
+    background-color: #e2e8f0;
+    color: #0f172a;
+}
+QTabBar::tab:selected {
+    background-color: #1d4ed8;
+    color: #ffffff;
+    border-color: #1d4ed8;
+}
+QGroupBox {
+    font-weight: bold;
+    font-size: 10pt;
+    color: #1e3a8a;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-top: 10px;
+    padding-top: 14px;
+    background-color: #ffffff;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 8px;
+    left: 10px;
+    background-color: #ffffff;
+}
+QLineEdit, QSpinBox, QComboBox, QTextEdit {
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 10pt;
+    color: #0f172a;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {
+    border: 2px solid #2563eb;
+    background-color: #f8fafc;
+}
+QTableWidget {
+    background-color: #ffffff;
+    alternate-background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    gridline-color: #f1f5f9;
+    selection-background-color: #dbeafe;
+    selection-color: #1e3a8a;
+}
+QHeaderView::section {
+    background-color: #f1f5f9;
+    color: #334155;
+    font-weight: bold;
+    border: none;
+    border-bottom: 2px solid #cbd5e1;
+    padding: 6px;
+}
+QProgressBar {
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    text-align: center;
+    background-color: #f1f5f9;
+    height: 18px;
+    font-size: 9pt;
+    font-weight: bold;
+}
+QProgressBar::chunk {
+    background-color: #2563eb;
+    border-radius: 5px;
+}
+QStatusBar {
+    background-color: #ffffff;
+    border-top: 1px solid #e2e8f0;
+    color: #475569;
+}
+"""
+
+class FullscreenPreviewDialog(QDialog):
+    """Cửa sổ xem trước trang in chất lượng cao, phóng to toàn màn hình"""
+    def __init__(self, pdf_path: str, initial_page: int = 1, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Xem trước chất lượng cao - {os.path.basename(pdf_path)}")
+        self.resize(1100, 850)
+        self.pdf_path = pdf_path
+        self.current_page = initial_page
+        self.total_pages = count_pages(pdf_path)
+        self.zoom = 1.8
+        self.init_ui()
+        self.render_page()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        top_bar = QHBoxLayout()
+        self.lbl_info = QLabel(f"📄 {os.path.basename(self.pdf_path)}")
+        self.lbl_info.setStyleSheet("font-weight: bold; font-size: 11pt; color: #1e3a8a;")
+        top_bar.addWidget(self.lbl_info)
+        top_bar.addStretch()
+
+        self.btn_prev = QPushButton("◀ Trang trước")
+        self.btn_prev.clicked.connect(self.prev_page)
+        top_bar.addWidget(self.btn_prev)
+
+        self.lbl_page = QLabel(f"Trang {self.current_page} / {self.total_pages}")
+        self.lbl_page.setStyleSheet("font-weight: bold; font-size: 11pt; margin: 0 8px;")
+        top_bar.addWidget(self.lbl_page)
+
+        self.btn_next = QPushButton("Trang sau ▶")
+        self.btn_next.clicked.connect(self.next_page)
+        top_bar.addWidget(self.btn_next)
+
+        top_bar.addSpacing(16)
+        self.btn_zoom_in = QPushButton("🔍 +")
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+        top_bar.addWidget(self.btn_zoom_in)
+
+        self.btn_zoom_out = QPushButton("🔍 -")
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+        top_bar.addWidget(self.btn_zoom_out)
+
+        self.btn_close = QPushButton("✕ Đóng")
+        self.btn_close.clicked.connect(self.accept)
+        top_bar.addWidget(self.btn_close)
+
+        layout.addLayout(top_bar)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setAlignment(Qt.AlignCenter)
+        self.scroll_area.setStyleSheet("background-color: #334155; border-radius: 8px;")
+
+        self.lbl_image = QLabel()
+        self.lbl_image.setAlignment(Qt.AlignCenter)
+        self.scroll_area.setWidget(self.lbl_image)
+
+        layout.addWidget(self.scroll_area)
+
+    def render_page(self):
+        dpi = int(120 * self.zoom)
+        thumb_path = render_page_thumbnail(self.pdf_path, self.current_page, dpi=dpi)
+        if thumb_path and os.path.exists(thumb_path):
+            pixmap = QPixmap(thumb_path)
+            self.lbl_image.setPixmap(pixmap)
+            self.lbl_page.setText(f"Trang {self.current_page} / {self.total_pages}")
+        self.btn_prev.setEnabled(self.current_page > 1)
+        self.btn_next.setEnabled(self.current_page < self.total_pages)
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.render_page()
+
+    def next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.render_page()
+
+    def zoom_in(self):
+        self.zoom = min(self.zoom * 1.25, 3.5)
+        self.render_page()
+
+    def zoom_out(self):
+        self.zoom = max(self.zoom * 0.8, 0.8)
+        self.render_page()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Left:
+            self.prev_page()
+        elif event.key() == Qt.Key_Right:
+            self.next_page()
+        elif event.key() == Qt.Key_Escape:
+            self.accept()
+        else:
+            super().keyPressEvent(event)
+
+
+class FileConvertWorker(QThread):
+    """Tiến trình chuyển đổi tài liệu ngầm, không làm treo giao diện người dùng"""
+    file_converted_signal = Signal(dict)
+    progress_signal = Signal(int, int)
+    all_done_signal = Signal()
+
+    def __init__(self, file_paths):
+        super().__init__()
+        self.file_paths = file_paths
+
+    def run(self):
+        total = len(self.file_paths)
+        for idx, p in enumerate(self.file_paths):
+            ext = os.path.splitext(p)[1].lower()
+            base_name = os.path.basename(p)
+            try:
+                ok, pdf_path, err = convert_to_pdf(p)
+                pages = count_pages(pdf_path) if ok else 1
+            except Exception as e:
+                ok, pdf_path, err, pages = False, "", str(e), 1
+
+            item = {
+                "original_path": p,
+                "pdf_path": pdf_path if ok else "",
+                "file_name": base_name,
+                "ext": ext,
+                "pages": pages,
+                "convert_ok": ok,
+                "convert_error": err
+            }
+            self.file_converted_signal.emit(item)
+            self.progress_signal.emit(idx + 1, total)
+
+        self.all_done_signal.emit()
+
+
+class BatchPrintWorker(QThread):
+    """Tiến trình in liên tục toàn bộ hàng đợi file với báo cáo tiến độ chi tiết"""
+    progress_signal = Signal(int, int, str)
+    item_status_signal = Signal(int, str, str)
+    finished_signal = Signal(dict)
+
+    def __init__(self, queue_items_with_indices, job_configs, sumatra_exe):
+        super().__init__()
+        self.items_with_indices = queue_items_with_indices
+        self.job_configs = job_configs
+        self.sumatra_exe = sumatra_exe
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        total = len(self.items_with_indices)
+        success_count = 0
+        failed_count = 0
+        total_sheets = 0
+        total_amount = 0.0
+
+        for seq, (queue_idx, item) in enumerate(self.items_with_indices):
+            if self._cancelled:
+                break
+
+            fname = item.get("file_name", f"File #{seq+1}")
+            self.progress_signal.emit(seq + 1, total, fname)
+            self.item_status_signal.emit(queue_idx, "🔵 Đang in...", "#0284c7")
+
+            try:
+                req_data = self.job_configs['req_data']
+                duplex_val = self.job_configs['duplex_val']
+                paper = self.job_configs['paper']
+                color = self.job_configs['color']
+                copies = self.job_configs['copies']
+                is_booklet = (duplex_val == 3)
+                printer_name = self.job_configs['printer_name']
+
+                src_pdf = item['pdf_path']
+                ready_pdf = src_pdf
+                duplex_for_printer = duplex_val
+
+                if is_booklet:
+                    booklet_pdf = os.path.splitext(ready_pdf)[0] + "_booklet.pdf"
+                    create_booklet_pdf(ready_pdf, booklet_pdf, target_paper=paper)
+                    ready_pdf = booklet_pdf
+                    duplex_for_printer = 2
+
+                cost_info = calculate_print_cost(
+                    pages_count=item.get("pages", 1),
+                    copies=copies,
+                    paper=paper,
+                    duplex=duplex_val,
+                    color=color,
+                    is_booklet=is_booklet
+                )
+
+                saved_orig, saved_pdf = organize_and_save_files(
+                    original_file_path=item['original_path'],
+                    converted_pdf_path=ready_pdf,
+                    requester_type=req_data['type'],
+                    requester_name=req_data['name'],
+                    copies=copies,
+                    title=item['file_name']
+                )
+
+                job_data = {
+                    "requester_id": req_data['id'],
+                    "related_classes": self.job_configs.get('related_classes', ''),
+                    "title": item['file_name'],
+                    "file_type": item['ext'].replace(".", ""),
+                    "original_file_path": item['original_path'],
+                    "pages": item.get("pages", 1),
+                    "page_range": "",
+                    "copies": copies,
+                    "sheets": cost_info['total_sheets'],
+                    "printer_name": printer_name,
+                    "paper": paper,
+                    "duplex": duplex_val,
+                    "color": color,
+                    "unit_price": cost_info['unit_price'],
+                    "amount": cost_info['amount'],
+                    "amount_override": None,
+                    "is_free": 0,
+                    "override_reason": "",
+                    "saved_path": saved_orig,
+                    "pdf_path": saved_pdf,
+                    "status": "pending",
+                    "paid_status": "unpaid",
+                    "note": self.job_configs.get('note', ''),
+                    "print_file_path": ready_pdf
+                }
+                job_id = create_print_job(job_data)
+
+                settings_str = build_sumatra_print_settings(
+                    copies=copies,
+                    duplex=duplex_for_printer,
+                    color=color,
+                    paper=paper,
+                    collate=True
+                )
+                res = execute_sumatra_print(
+                    self.sumatra_exe,
+                    printer_name,
+                    ready_pdf,
+                    settings_str
+                )
+
+                if res.get("success"):
+                    update_print_job_status(job_id, "printed")
+                    append_job_to_excel(job_id)
+                    success_count += 1
+                    total_sheets += cost_info['total_sheets']
+                    total_amount += cost_info['amount']
+                    self.item_status_signal.emit(queue_idx, "✔️ Đã in", "#16a34a")
+                else:
+                    update_print_job_status(job_id, "error", res.get("error"))
+                    failed_count += 1
+                    self.item_status_signal.emit(queue_idx, "❌ Lỗi in", "#dc2626")
+
+            except Exception as e:
+                failed_count += 1
+                self.item_status_signal.emit(queue_idx, f"❌ Lỗi: {e}", "#dc2626")
+
+        self.finished_signal.emit({
+            "total": total,
+            "success": success_count,
+            "failed": failed_count,
+            "total_sheets": total_sheets,
+            "total_amount": total_amount
+        })
+
 
 class FileDropListWidget(QTableWidget):
     """Bảng danh sách hàng đợi file hỗ trợ kéo thả trực tiếp từ Windows Explorer"""
@@ -50,13 +434,13 @@ class FileDropListWidget(QTableWidget):
         self.setAcceptDrops(True)
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setColumnCount(4)
-        self.setHorizontalHeaderLabels(["Tên file", "Định dạng", "Số trang", "Đường dẫn"])
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(["Tên file", "Định dạng", "Số trang", "Trạng thái", "Đường dẫn"])
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
-        self.setColumnHidden(3, True) # Ẩn cột đường dẫn gốc
+        self.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.setColumnHidden(4, True) # Ẩn cột đường dẫn gốc
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -120,14 +504,17 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Phần mềm Quản lý In ấn Đề - THPT [{get_machine_name()}]")
-        self.resize(1280, 800)
+        self.resize(1300, 820)
 
         self.current_queue = [] # Danh sach cac file trong hang doi
         self.selected_file_index = -1
         self.current_preview_page = 1
         self.total_preview_pages = 1
         self.current_pdf_for_preview = None
+        self.preview_cache = {} # Cache thumbnail: (pdf_path, page, zoom) -> QPixmap
+        self.zoom_factor = 1.0
 
+        self.setStyleSheet(MODERN_STYLE)
         self.init_ui()
         self.load_initial_data()
 
@@ -194,6 +581,10 @@ class MainWindow(QMainWindow):
         lbl_queue.setStyleSheet("font-weight: bold; color: #1e3a8a; font-size: 11pt;")
         left_layout.addWidget(lbl_queue)
 
+        self.progress_queue = QProgressBar()
+        self.progress_queue.setVisible(False)
+        left_layout.addWidget(self.progress_queue)
+
         self.table_queue = FileDropListWidget()
         self.table_queue.files_dropped.connect(self.add_files_to_queue)
         self.table_queue.itemSelectionChanged.connect(self.on_queue_selection_changed)
@@ -220,10 +611,20 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(preset_layout)
 
         # Áp dụng cho tất cả
-        self.btn_apply_all = QPushButton("📋 Áp dụng cấu hình này cho TẤT CẢ file trong hàng đợi")
-        self.btn_apply_all.setStyleSheet("background-color: #f3f4f6; color: #1f2937; padding: 6px; font-weight: bold;")
+        self.btn_apply_all = QPushButton("📋 Áp dụng cấu hình này cho TẤT CẢ file")
+        self.btn_apply_all.setStyleSheet("background-color: #f1f5f9; color: #1f2937; padding: 6px; font-weight: bold;")
         self.btn_apply_all.clicked.connect(self.apply_config_to_all)
         left_layout.addWidget(self.btn_apply_all)
+
+        # Nút in toàn bộ hàng đợi
+        self.btn_batch_print_all = QPushButton("🚀 IN TẤT CẢ FILE TRONG HÀNG ĐỢI (BATCH)")
+        self.btn_batch_print_all.setFixedHeight(40)
+        self.btn_batch_print_all.setStyleSheet("""
+            QPushButton { background-color: #ea580c; color: white; font-weight: bold; font-size: 11pt; border-radius: 6px; }
+            QPushButton:hover { background-color: #c2410c; }
+        """)
+        self.btn_batch_print_all.clicked.connect(self.execute_batch_print_all)
+        left_layout.addWidget(self.btn_batch_print_all)
 
         splitter.addWidget(left_widget)
 
@@ -395,6 +796,30 @@ class MainWindow(QMainWindow):
         nav_box.addWidget(self.btn_next_page)
         right_layout.addLayout(nav_box)
 
+        # Thanh phóng to / thu nhỏ & xem toàn màn hình
+        zoom_box = QHBoxLayout()
+        self.btn_zoom_out = QPushButton("🔍 -")
+        self.btn_zoom_out.setFixedWidth(50)
+        self.btn_zoom_out.clicked.connect(self.zoom_out_preview)
+
+        self.btn_zoom_reset = QPushButton("100%")
+        self.btn_zoom_reset.setFixedWidth(60)
+        self.btn_zoom_reset.clicked.connect(self.zoom_reset_preview)
+
+        self.btn_zoom_in = QPushButton("🔍 +")
+        self.btn_zoom_in.setFixedWidth(50)
+        self.btn_zoom_in.clicked.connect(self.zoom_in_preview)
+
+        self.btn_fullscreen_preview = QPushButton("⛶ Xem lớn")
+        self.btn_fullscreen_preview.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold;")
+        self.btn_fullscreen_preview.clicked.connect(self.open_fullscreen_preview)
+
+        zoom_box.addWidget(self.btn_zoom_out)
+        zoom_box.addWidget(self.btn_zoom_reset)
+        zoom_box.addWidget(self.btn_zoom_in)
+        zoom_box.addWidget(self.btn_fullscreen_preview)
+        right_layout.addLayout(zoom_box)
+
         # Nút hành động lớn
         self.btn_print_now = QPushButton("🖨️ IN NHANH TỰ ĐỘNG (SILENT)")
         self.btn_print_now.setFixedHeight(46)
@@ -525,13 +950,20 @@ class MainWindow(QMainWindow):
         self.table_report.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         layout.addWidget(self.table_report)
 
-        # Nút thu tiền
+        # Nút thu tiền & In phiếu thu
         action_layout = QHBoxLayout()
         self.btn_mark_paid = QPushButton("✅ ĐÁNH DẤU ĐÃ THU TIỀN CHO NGƯỜI ĐANG CHỌN")
         self.btn_mark_paid.setFixedHeight(38)
         self.btn_mark_paid.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold; font-size: 11pt;")
         self.btn_mark_paid.clicked.connect(self.mark_selected_requester_paid)
         action_layout.addWidget(self.btn_mark_paid)
+
+        self.btn_print_receipt = QPushButton("🧾 XUẤT / IN PHIẾU THU TIỀN")
+        self.btn_print_receipt.setFixedHeight(38)
+        self.btn_print_receipt.setStyleSheet("background-color: #059669; color: white; font-weight: bold; font-size: 11pt;")
+        self.btn_print_receipt.clicked.connect(self.generate_receipt_for_selected)
+        action_layout.addWidget(self.btn_print_receipt)
+
         action_layout.addStretch()
         layout.addLayout(action_layout)
 
@@ -792,6 +1224,28 @@ class MainWindow(QMainWindow):
         teacher_vbox.addLayout(add_gv_box)
 
         vbox.addWidget(grp_teacher)
+
+        # --- PHẦN 4: SAO LƯU & KHÔI PHỤC DỮ LIỆU ---
+        grp_backup = QGroupBox("4. An toàn dữ liệu: Sao lưu & Khôi phục CSDL")
+        backup_vbox = QVBoxLayout(grp_backup)
+        backup_btn_box = QHBoxLayout()
+        self.btn_backup_now = QPushButton("💾 Sao lưu dữ liệu CSDL ngay (.bak)")
+        self.btn_backup_now.setStyleSheet("background-color: #2563eb; color: white; font-weight: bold; padding: 8px 14px;")
+        self.btn_backup_now.clicked.connect(self.backup_database_now)
+        backup_btn_box.addWidget(self.btn_backup_now)
+
+        self.btn_restore_now = QPushButton("📂 Khôi phục CSDL từ file sao lưu...")
+        self.btn_restore_now.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold; padding: 8px 14px;")
+        self.btn_restore_now.clicked.connect(self.restore_database_dialog)
+        backup_btn_box.addWidget(self.btn_restore_now)
+        backup_btn_box.addStretch()
+        backup_vbox.addLayout(backup_btn_box)
+
+        lbl_backup_info = QLabel("Khuyên dùng: Nên bấm sao lưu định kỳ hoặc trước khi cài lại Windows / chuyển máy.")
+        lbl_backup_info.setStyleSheet("color: #64748b; font-style: italic;")
+        backup_vbox.addWidget(lbl_backup_info)
+
+        vbox.addWidget(grp_backup)
 
         scroll.setWidget(container)
         layout.addWidget(scroll)
@@ -1107,37 +1561,49 @@ class MainWindow(QMainWindow):
             self.add_files_to_queue(files)
 
     def add_files_to_queue(self, file_paths):
+        if not file_paths:
+            return
+
+        self.progress_queue.setVisible(True)
+        self.progress_queue.setMaximum(len(file_paths))
+        self.progress_queue.setValue(0)
         self.status_bar_label.setText(f"Đang xử lý {len(file_paths)} file...")
-        for p in file_paths:
-            ext = os.path.splitext(p)[1].lower()
-            base_name = os.path.basename(p)
 
-            # Chuyển đổi và đếm trang
-            ok, pdf_path, err = convert_to_pdf(p)
-            pages = count_pages(pdf_path) if ok else 1
+        self.convert_worker = FileConvertWorker(file_paths)
+        self.convert_worker.file_converted_signal.connect(self.on_file_converted)
+        self.convert_worker.progress_signal.connect(self.on_convert_progress)
+        self.convert_worker.all_done_signal.connect(self.on_convert_all_done)
+        self.convert_worker.start()
 
-            item = {
-                "original_path": p,
-                "pdf_path": pdf_path if ok else "",
-                "file_name": base_name,
-                "ext": ext,
-                "pages": pages,
-                "convert_ok": ok,
-                "convert_error": err
-            }
-            self.current_queue.append(item)
+    def on_file_converted(self, item):
+        self.current_queue.append(item)
+        row = self.table_queue.rowCount()
+        self.table_queue.insertRow(row)
+        self.table_queue.setItem(row, 0, QTableWidgetItem(item['file_name']))
+        self.table_queue.setItem(row, 1, QTableWidgetItem(item['ext'].upper().replace(".", "")))
+        self.table_queue.setItem(row, 2, QTableWidgetItem(str(item['pages'])))
 
-            row = self.table_queue.rowCount()
-            self.table_queue.insertRow(row)
-            self.table_queue.setItem(row, 0, QTableWidgetItem(base_name))
-            self.table_queue.setItem(row, 1, QTableWidgetItem(ext.upper().replace(".", "")))
-            self.table_queue.setItem(row, 2, QTableWidgetItem(str(pages)))
-            self.table_queue.setItem(row, 3, QTableWidgetItem(p))
+        status_item = QTableWidgetItem()
+        if item['convert_ok']:
+            status_item.setText("🟢 Sẵn sàng")
+            status_item.setForeground(QColor("#16a34a"))
+        else:
+            status_item.setText("❌ Lỗi đổi")
+            status_item.setForeground(QColor("#dc2626"))
+        self.table_queue.setItem(row, 3, status_item)
+        self.table_queue.setItem(row, 4, QTableWidgetItem(item['original_path']))
 
-        if self.table_queue.rowCount() > 0 and self.selected_file_index == -1:
+        if self.selected_file_index == -1:
             self.table_queue.selectRow(0)
 
+    def on_convert_progress(self, current, total):
+        self.progress_queue.setValue(current)
+        self.status_bar_label.setText(f"Đang xử lý file {current}/{total}...")
+
+    def on_convert_all_done(self):
+        self.progress_queue.setVisible(False)
         self.status_bar_label.setText(f"Hàng đợi: {len(self.current_queue)} file sẵn sàng.")
+        self.recalculate_cost()
 
     def on_queue_selection_changed(self):
         selected_rows = self.table_queue.selectionModel().selectedRows()
@@ -1181,17 +1647,30 @@ class MainWindow(QMainWindow):
     # ==================== PREVIEW & PRICING ====================
     def update_preview(self):
         if not self.current_pdf_for_preview or not os.path.exists(self.current_pdf_for_preview):
-            self.lbl_preview_img.setText("Chưa có bản xem trước")
+            self.lbl_preview_img.setText("Kéo file vào để xem trước")
             self.lbl_page_indicator.setText("Trang 0 / 0")
             return
 
-        thumb_path = render_page_thumbnail(self.current_pdf_for_preview, self.current_preview_page)
-        if thumb_path and os.path.exists(thumb_path):
-            pixmap = QPixmap(thumb_path)
+        cache_key = (self.current_pdf_for_preview, self.current_preview_page, round(self.zoom_factor, 2))
+        if cache_key in self.preview_cache:
+            pixmap = self.preview_cache[cache_key]
+        else:
+            dpi = int(120 * self.zoom_factor)
+            thumb_path = render_page_thumbnail(self.current_pdf_for_preview, self.current_preview_page, dpi=dpi)
+            if thumb_path and os.path.exists(thumb_path):
+                pixmap = QPixmap(thumb_path)
+                if len(self.preview_cache) > 40:
+                    self.preview_cache.pop(next(iter(self.preview_cache)))
+                self.preview_cache[cache_key] = pixmap
+            else:
+                pixmap = None
+
+        if pixmap and not pixmap.isNull():
             self.lbl_preview_img.setPixmap(
                 pixmap.scaled(self.lbl_preview_img.width() - 10, self.lbl_preview_img.height() - 10, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
             self.lbl_page_indicator.setText(f"Trang {self.current_preview_page} / {self.total_preview_pages}")
+            self.btn_zoom_reset.setText(f"{int(self.zoom_factor * 100)}%")
 
     def prev_preview_page(self):
         if self.current_preview_page > 1:
@@ -1202,6 +1681,25 @@ class MainWindow(QMainWindow):
         if self.current_preview_page < self.total_preview_pages:
             self.current_preview_page += 1
             self.update_preview()
+
+    def zoom_in_preview(self):
+        self.zoom_factor = min(self.zoom_factor * 1.25, 3.0)
+        self.update_preview()
+
+    def zoom_out_preview(self):
+        self.zoom_factor = max(self.zoom_factor * 0.8, 0.4)
+        self.update_preview()
+
+    def zoom_reset_preview(self):
+        self.zoom_factor = 1.0
+        self.update_preview()
+
+    def open_fullscreen_preview(self):
+        if not self.current_pdf_for_preview or not os.path.exists(self.current_pdf_for_preview):
+            QMessageBox.information(self, "Thông báo", "Chưa có file PDF nào để xem toàn màn hình.")
+            return
+        dlg = FullscreenPreviewDialog(self.current_pdf_for_preview, self.current_preview_page, self)
+        dlg.exec()
 
     def recalculate_cost(self):
         if self.selected_file_index < 0 or self.selected_file_index >= len(self.current_queue):
@@ -1458,9 +1956,203 @@ class MainWindow(QMainWindow):
         self.load_report_data()
         self.update_recent_requester_buttons()
 
+    def execute_batch_print_all(self):
+        """In toàn bộ các file trong hàng đợi có convert_ok = True"""
+        if not self.current_queue:
+            QMessageBox.warning(self, "Thông báo", "Hàng đợi đang trống! Hãy kéo thả file vào trước.")
+            return
+
+        valid_items = [(idx, item) for idx, item in enumerate(self.current_queue) if item.get('convert_ok')]
+        if not valid_items:
+            QMessageBox.warning(self, "Thông báo", "Không có file nào trong hàng đợi sẵn sàng để in.")
+            return
+
+        req_data = self.cb_requesters.currentData()
+        if not req_data:
+            QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn Người yêu cầu (giáo viên hoặc lớp) trước khi in!")
+            return
+
+        copies = self.sp_copies.value()
+        paper = self.cb_paper.currentText()
+        duplex_val = self.cb_duplex.currentData()
+        color = self.cb_color.currentData()
+        is_booklet = (duplex_val == 3)
+        printer_item = self.cb_printers.currentData()
+        printer_name = printer_item['windows_name'] if printer_item else self.cb_printers.currentText()
+
+        est_sheets = 0
+        est_amount = 0.0
+        for _, item in valid_items:
+            c = calculate_print_cost(
+                pages_count=item.get('pages', 1),
+                copies=copies,
+                paper=paper,
+                duplex=duplex_val,
+                color=color,
+                is_booklet=is_booklet
+            )
+            est_sheets += c['total_sheets']
+            est_amount += c['amount']
+
+        confirm = QMessageBox.question(
+            self, "Xác nhận in toàn bộ hàng đợi",
+            f"Bạn có chắc chắn muốn in liên tiếp {len(valid_items)} file trong hàng đợi?\n\n"
+            f"- Người yêu cầu: {req_data['name']}\n"
+            f"- Máy in: {printer_name}\n"
+            f"- Số bản in mỗi file: {copies}\n"
+            f"- Ước tính tổng số tờ: {est_sheets:,} tờ\n"
+            f"- Ước tính thành tiền: {est_amount:,.0f} đ\n\n"
+            f"Hệ thống sẽ gửi lệnh in tự động lần lượt từng file.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        self.btn_batch_print_all.setEnabled(False)
+        self.btn_batch_print_all.setText("Đang in hàng loạt...")
+        self.btn_print_now.setEnabled(False)
+        self.btn_print_windows.setEnabled(False)
+
+        self.progress_queue.setVisible(True)
+        self.progress_queue.setMaximum(len(valid_items))
+        self.progress_queue.setValue(0)
+
+        sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
+        job_configs = {
+            "req_data": req_data,
+            "related_classes": self.txt_related_classes.text().strip(),
+            "duplex_val": duplex_val,
+            "paper": paper,
+            "color": color,
+            "copies": copies,
+            "printer_name": printer_name,
+            "note": self.txt_job_note.text().strip()
+        }
+
+        self.batch_worker = BatchPrintWorker(valid_items, job_configs, sumatra_exe)
+        self.batch_worker.progress_signal.connect(self.on_batch_progress)
+        self.batch_worker.item_status_signal.connect(self.on_batch_item_status)
+        self.batch_worker.finished_signal.connect(self.on_batch_finished)
+        self.batch_worker.start()
+
+    def on_batch_progress(self, current, total, filename):
+        self.progress_queue.setValue(current)
+        self.status_bar_label.setText(f"Đang in hàng loạt: {current}/{total} - {filename}")
+
+    def on_batch_item_status(self, queue_idx, status_text, color_code):
+        if 0 <= queue_idx < self.table_queue.rowCount():
+            item = self.table_queue.item(queue_idx, 3)
+            if not item:
+                item = QTableWidgetItem()
+                self.table_queue.setItem(queue_idx, 3, item)
+            item.setText(status_text)
+            item.setForeground(QColor(color_code))
+
+    def on_batch_finished(self, summary):
+        self.btn_batch_print_all.setEnabled(True)
+        self.btn_batch_print_all.setText("🚀 IN TẤT CẢ FILE TRONG HÀNG ĐỢI (BATCH)")
+        self.btn_print_now.setEnabled(True)
+        self.btn_print_windows.setEnabled(True)
+        self.progress_queue.setVisible(False)
+        self.status_bar_label.setText(f"Hoàn thành in hàng loạt {summary['success']}/{summary['total']} file.")
+
+        play_alert_sound()
+
         self.load_history_data()
         self.load_report_data()
         self.update_recent_requester_buttons()
+
+        QMessageBox.information(
+            self, "Hoàn tất in hàng loạt",
+            f"Đã hoàn thành in hàng loạt!\n\n"
+            f"- Tổng số file: {summary['total']}\n"
+            f"- Thành công: {summary['success']} file\n"
+            f"- Thất bại: {summary['failed']} file\n"
+            f"- Tổng số tờ giấy đã in: {summary['total_sheets']:,} tờ\n"
+            f"- Tổng số tiền: {summary['total_amount']:,.0f} đ\n\n"
+            f"Toàn bộ bản ghi đã được ghi sổ CSDL và đồng bộ Excel."
+        )
+
+    def generate_receipt_for_selected(self):
+        """Xuất phiếu thu tiền in ấn đẹp theo quy chuẩn văn bản THPT"""
+        selected_rows = self.table_report.selectionModel().selectedRows()
+        if not selected_rows:
+            QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn một người trong bảng báo cáo để xuất phiếu thu!")
+            return
+
+        row = selected_rows[0].row()
+        req_id = int(self.table_report.item(row, 0).text())
+        req_name = self.table_report.item(row, 1).text()
+        req_type = self.table_report.item(row, 2).text()
+        dept = self.table_report.item(row, 3).text()
+
+        jobs = get_jobs_for_requester(req_id, unpaid_only=False, limit=30)
+        if not jobs:
+            QMessageBox.information(self, "Thông báo", f"Không tìm thấy lượt in nào của {req_name}.")
+            return
+
+        storage_dir = get_setting("storage_dir", "D:\\DeDaIn")
+        receipt_dir = os.path.join(storage_dir, "PhieuThu")
+        os.makedirs(receipt_dir, exist_ok=True)
+        date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = "".join(c for c in req_name if c.isalnum() or c in " _-").strip()
+        receipt_path = os.path.join(receipt_dir, f"PhieuThu_{safe_name}_{date_str}.pdf")
+
+        try:
+            generate_receipt_pdf(
+                requester_name=req_name,
+                requester_type="teacher" if "giáo viên" in req_type.lower() else "class",
+                department_or_grade=dept,
+                jobs=jobs,
+                output_pdf_path=receipt_path
+            )
+
+            reply = QMessageBox.question(
+                self, "Xuất phiếu thu thành công",
+                f"Đã tạo Phiếu xác nhận thanh toán in ấn cho:\n{req_name}\n\nĐường dẫn: {receipt_path}\n\nBạn có muốn mở xem và in ngay phiếu này không?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                os.startfile(receipt_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể tạo phiếu thu: {e}")
+
+    def backup_database_now(self):
+        """Sao lưu CSDL SQLite 1 chạm an toàn"""
+        backup_dir = get_setting("backup_dir", os.path.join(get_setting("storage_dir", "D:\\DeDaIn"), "backups"))
+        ok, res = create_database_backup(backup_dir)
+        if ok:
+            QMessageBox.information(
+                self, "Sao lưu thành công",
+                f"Đã sao lưu toàn bộ dữ liệu CSDL an toàn tới:\n{res}\n\nFile này lưu toàn bộ danh mục giáo viên, 42 lớp, bảng giá và toàn bộ lịch sử in ấn."
+            )
+        else:
+            QMessageBox.critical(self, "Lỗi sao lưu", f"Không thể sao lưu CSDL:\n{res}")
+
+    def restore_database_dialog(self):
+        """Khôi phục CSDL từ file sao lưu .bak"""
+        backup_file, _ = QFileDialog.getOpenFileName(
+            self, "Chọn file sao lưu CSDL cần khôi phục", "", "File sao lưu SQLite (*.bak *.db);;Tất cả file (*.*)"
+        )
+        if not backup_file:
+            return
+
+        confirm = QMessageBox.question(
+            self, "Xác nhận khôi phục",
+            f"CẢNH BÁO: Thao tác này sẽ ghi đè dữ liệu hiện tại bằng dữ liệu từ file sao lưu:\n{backup_file}\n\nBạn có chắc chắn muốn khôi phục không?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        ok, msg = restore_database_from_backup(backup_file)
+        if ok:
+            QMessageBox.information(self, "Khôi phục thành công", msg)
+            self.load_initial_data()
+            self.load_history_data()
+            self.load_report_data()
+        else:
+            QMessageBox.critical(self, "Lỗi khôi phục", msg)
 
     # ==================== HISTORY & REPORTS ====================
     def load_history_data(self):

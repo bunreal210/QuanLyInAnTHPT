@@ -12,6 +12,8 @@ tools/SumatraPDF.exe
 tools/*.pdf
 tools/SumatraPDF-settings.txt
 tools/sumatrapdfcache/
+*.pre_restore
+data/*.pre_restore
 
 # Log files
 *.log

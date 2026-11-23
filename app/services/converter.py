@@ -262,17 +262,17 @@ def count_pages(pdf_path: str) -> int:
         logger.error(f"Loi dem trang PDF: {e}")
         return 1
 
-def render_page_thumbnail(pdf_path: str, page_number_1based: int = 1, output_png_path: str = None) -> Optional[str]:
+def render_page_thumbnail(pdf_path: str, page_number_1based: int = 1, output_png_path: str = None, dpi: int = 120) -> Optional[str]:
     """Render 1 trang PDF thanh anh PNG de hien thi xem truoc tren giao dien"""
     try:
         doc = pymupdf.open(pdf_path)
         if page_number_1based < 1 or page_number_1based > len(doc):
             page_number_1based = 1
         page = doc[page_number_1based - 1]
-        pix = page.get_pixmap(dpi=120)
+        pix = page.get_pixmap(dpi=dpi)
 
         if not output_png_path:
-            output_png_path = os.path.join(TEMP_PDF_DIR, f"preview_{page_number_1based}_{abs(hash(pdf_path)) % 1000000}.png")
+            output_png_path = os.path.join(TEMP_PDF_DIR, f"preview_{page_number_1based}_{abs(hash(pdf_path)) % 1000000}_{dpi}.png")
 
         pix.save(output_png_path)
         doc.close()

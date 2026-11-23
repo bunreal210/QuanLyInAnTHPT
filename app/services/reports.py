@@ -98,3 +98,17 @@ def mark_jobs_as_paid(job_ids: List[int] = None, requester_id: int = None):
                 )
     finally:
         conn.close()
+
+def get_jobs_for_requester(requester_id: int, unpaid_only: bool = False, limit: int = 50) -> List[Dict[str, Any]]:
+    """Lay danh sach cac luot in cua mot nguoi yeu cau de lap phieu thu"""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        query = "SELECT * FROM print_jobs WHERE requester_id = ? AND status != 'cancelled'"
+        if unpaid_only:
+            query += " AND paid_status = 'unpaid' AND is_free = 0"
+        query += " ORDER BY created_at DESC LIMIT ?"
+        cur.execute(query, (requester_id, limit))
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()

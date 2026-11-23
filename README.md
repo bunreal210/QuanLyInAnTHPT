@@ -81,13 +81,20 @@ D:\DeDaIn\
 ```
 - Tự động chuẩn hóa tên file bỏ ký tự cấm, chống trùng lặp, chống lỗi đường dẫn quá 260 ký tự.
 
-### 7. 📊 Báo cáo, Thu tiền & Cập nhật Excel
+### 7. 📊 Báo cáo, Thu tiền, Xuất Phiếu thu & Cập nhật Excel
 - Dashboard thống kê nhanh hôm nay (số lượt, số tờ, tổng tiền) và tổng nợ chưa thu.
 - Bảng công nợ theo từng giáo viên và 42 lớp; nút **"Đánh dấu đã thu tiền cho người này"**.
+- **🧾 Xuất / In Phiếu thu tiền in ấn chuẩn THPT:** Tự động tạo file PDF Phiếu thu có quốc hiệu tiêu ngữ, chi tiết số tờ, thành tiền, số tiền viết bằng chữ tiếng Việt và khung ký tên 3 bên (Người nộp, Người lập, Thủ quỹ/Phụ trách in).
 - Tự động tạo và cập nhật file Excel `TongHopInAn.xlsx` gồm 3 sheet có công thức `SUMIFS` đối chiếu.
 - Cơ chế chống khóa file: Nếu file Excel đang mở, phần mềm tự đưa vào hàng đợi đồng bộ khi đóng file.
 
-### 8. ☁️ Đồng bộ 2 máy tính ở xa (Không cần mạng LAN)
+### 8. ⚡ Tối ưu hiệu năng, In hàng loạt & Xem trước nâng cao
+- **🚀 In toàn bộ hàng đợi (Batch Print):** Nút in tự động liên tiếp tất cả file trong hàng đợi, tự động lưu trữ, tính tiền và đồng bộ Excel với thanh tiến trình % và âm thanh thông báo khi hoàn thành.
+- **⚡ Bộ đệm hình ảnh xem trước (Preview Cache):** Lưu trữ trang trong RAM giúp chuyển trang tức thì (0ms), không độ trễ.
+- **🔍 Phóng to / Thu nhỏ & Xem lớn (Fullscreen Preview):** Dễ dàng phóng to kiểm tra công thức toán, hình vẽ, sơ đồ trước khi gửi in.
+- **💾 Sao lưu & Khôi phục CSDL 1 chạm:** Sao lưu toàn bộ dữ liệu ra file `.bak` an toàn hoặc khôi phục khi chuyển máy.
+
+### 9. ☁️ Đồng bộ 2 máy tính ở xa (Không cần mạng LAN)
 - Thầy/cô có thể dùng 1 máy ở trường và 1 máy ở nhà.
 - Chỉ cần trỏ chung vào một thư mục trên **Google Drive** hoặc **OneDrive**, bấm nút **"Đồng bộ 2 chiều ngay"** là toàn bộ nhật ký in ấn giữa 2 máy sẽ tự động gộp lại mà không sợ xung đột file.
 
