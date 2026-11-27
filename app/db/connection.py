@@ -3,12 +3,71 @@ import sys
 import sqlite3
 import socket
 import logging
+import shutil
 
 logger = logging.getLogger("print_manager.db")
 
-APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+def is_dir_writable(path: str) -> bool:
+    """Kiem tra xem thu muc co the ghi duoc hay khong"""
+    try:
+        os.makedirs(path, exist_ok=True)
+        test_file = os.path.join(path, f".write_test_{os.getpid()}")
+        with open(test_file, "w") as f:
+            f.write("ok")
+        os.remove(test_file)
+        return True
+    except Exception:
+        return False
+
+_APP_DIR = None
+
+def get_app_dir() -> str:
+    """
+    Xac dinh thu muc luu tru du lieu (CSDL, log, config, backups):
+    1. Chay Dev: nam tai thu muc goc du an.
+    2. Chay Portable (USB/Desktop): neu thu muc chua exe co quyen ghi thi luu truc tiep ben canh exe.
+    3. Cai dat trong Program Files (hoac thu muc he thong khong co quyen ghi): 
+       Tu dong su dung %LOCALAPPDATA%\\QuanLyInAn (chuan Windows, luon co quyen ghi day du).
+    """
+    global _APP_DIR
+    if _APP_DIR:
+        return _APP_DIR
+
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        is_in_program_files = (
+            exe_dir.lower().startswith(program_files.lower()) or
+            exe_dir.lower().startswith(program_files_x86.lower())
+        )
+
+        # Neu khong nam trong Program Files va thu muc exe_dir co quyen ghi -> dung thu muc do (Portable)
+        if not is_in_program_files and is_dir_writable(os.path.join(exe_dir, "data")):
+            _APP_DIR = exe_dir
+            return _APP_DIR
+
+        # Nguoc lai: Dung AppData cua Windows
+        local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        _APP_DIR = os.path.join(local_app_data, "QuanLyInAn")
+    else:
+        dev_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        _APP_DIR = dev_dir
+
+    os.makedirs(_APP_DIR, exist_ok=True)
+    return _APP_DIR
+
+def get_data_dir() -> str:
+    d = os.path.join(get_app_dir(), "data")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def get_default_db_path() -> str:
+    return os.path.join(get_data_dir(), "print_manager.db")
+
+APP_DIR = get_app_dir()
 DEFAULT_DATA_DIR = os.path.join(APP_DIR, "data")
-DEFAULT_DB_PATH = os.path.join(DEFAULT_DATA_DIR, "print_manager.db")
+DEFAULT_DB_PATH = get_default_db_path()
 
 # Cache current DB path
 _CURRENT_DB_PATH = None
@@ -23,8 +82,9 @@ def get_database_path():
     if _CURRENT_DB_PATH:
         return _CURRENT_DB_PATH
 
-    # Kiem tra file config cuc bo local_settings.ini neu co
-    config_file = os.path.join(APP_DIR, "local_config.txt")
+    app_dir = get_app_dir()
+    # Kiem tra file config cuc bo local_config.txt neu co
+    config_file = os.path.join(app_dir, "local_config.txt")
     if os.path.exists(config_file):
         try:
             with open(config_file, "r", encoding="utf-8") as f:
@@ -35,8 +95,25 @@ def get_database_path():
         except Exception as e:
             logger.warning(f"Loi doc local_config.txt: {e}")
 
-    os.makedirs(DEFAULT_DATA_DIR, exist_ok=True)
-    _CURRENT_DB_PATH = DEFAULT_DB_PATH
+    default_path = get_default_db_path()
+
+    # Neu database trong AppData chua co, copy database khoi tao tu ban cai dat (neu co)
+    if not os.path.exists(default_path) and getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates = [
+            os.path.join(exe_dir, "data", "print_manager.db"),
+            os.path.join(exe_dir, "_internal", "data", "print_manager.db"),
+        ]
+        for c in candidates:
+            if os.path.isfile(c) and os.path.getsize(c) > 0:
+                try:
+                    shutil.copy2(c, default_path)
+                    logger.info(f"Da sao chep database khoi tao tu {c} sang {default_path}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Khong the sao chep database ban dau tu {c}: {e}")
+
+    _CURRENT_DB_PATH = default_path
     return _CURRENT_DB_PATH
 
 def set_database_path(new_path):
@@ -46,7 +123,7 @@ def set_database_path(new_path):
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
     _CURRENT_DB_PATH = new_path
-    config_file = os.path.join(APP_DIR, "local_config.txt")
+    config_file = os.path.join(get_app_dir(), "local_config.txt")
     with open(config_file, "w", encoding="utf-8") as f:
         f.write(new_path)
     logger.info(f"Da chuyen duong dan database sang: {new_path}")

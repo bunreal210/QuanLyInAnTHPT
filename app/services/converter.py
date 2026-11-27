@@ -7,11 +7,15 @@ from typing import Tuple, List, Optional
 from PIL import Image
 import pymupdf  # PyMuPDF
 
+import tempfile
+
 logger = logging.getLogger("print_manager.converter")
 
-APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TEMP_PDF_DIR = os.path.join(APP_DIR, "data", "temp_pdf")
-os.makedirs(TEMP_PDF_DIR, exist_ok=True)
+TEMP_PDF_DIR = os.path.join(tempfile.gettempdir(), "QuanLyInAn", "temp_pdf")
+try:
+    os.makedirs(TEMP_PDF_DIR, exist_ok=True)
+except Exception:
+    pass
 
 def clean_old_temp_files(max_age_hours: int = 12):
     """Tu dong don dep cac file rac tam thoi cu de giai phong dung luong o dia cho may yeu"""

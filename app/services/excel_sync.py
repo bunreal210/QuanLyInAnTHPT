@@ -15,9 +15,14 @@ def get_excel_file_path() -> str:
     path = get_setting("excel_path", "D:\\DeDaIn\\TongHopInAn.xlsx")
     drive = os.path.splitdrive(path)[0]
     if drive and not os.path.exists(drive + "\\"):
-        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        path = os.path.join(app_dir, "DeDaIn", "TongHopInAn.xlsx")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+        from app.services.storage import get_storage_base_dir
+        path = os.path.join(get_storage_base_dir(), "TongHopInAn.xlsx")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except Exception:
+        from app.db.connection import get_app_dir
+        path = os.path.join(get_app_dir(), "DeDaIn", "TongHopInAn.xlsx")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
     return path
 
 def is_file_locked(filepath: str) -> bool:

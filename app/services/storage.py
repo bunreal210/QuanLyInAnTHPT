@@ -27,12 +27,21 @@ def sanitize_filename(filename: str, unaccent: bool = False, max_len: int = 80) 
 def get_storage_base_dir() -> str:
     """Lay thu muc goc luu tru tu settings"""
     base = get_setting("storage_dir", "D:\\DeDaIn")
-    # Neu o dia D khong ton tai thi fallback sang o C hoac thu muc du an
+    # Neu o dia D khong ton tai thi fallback sang thu muc an toan co quyen ghi
     drive = os.path.splitdrive(base)[0]
     if drive and not os.path.exists(drive + "\\"):
-        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        base = os.path.join(app_dir, "DeDaIn")
-    os.makedirs(base, exist_ok=True)
+        from app.db.connection import get_app_dir
+        docs_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        if os.path.exists(docs_dir):
+            base = os.path.join(docs_dir, "DeDaIn")
+        else:
+            base = os.path.join(get_app_dir(), "DeDaIn")
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        from app.db.connection import get_app_dir
+        base = os.path.join(get_app_dir(), "DeDaIn")
+        os.makedirs(base, exist_ok=True)
     return base
 
 def organize_and_save_files(

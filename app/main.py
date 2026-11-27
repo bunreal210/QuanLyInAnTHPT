@@ -55,19 +55,27 @@ def get_app_icon_path() -> str:
     return ""
 
 def setup_logging():
-    if getattr(sys, 'frozen', False):
-        log_dir = os.path.dirname(sys.executable)
-    else:
-        log_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from app.db.connection import get_app_dir
+    log_dir = get_app_dir()
+    os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "app.log")
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding="utf-8"),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
+    try:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.FileHandler(log_file, encoding="utf-8"),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+    except Exception:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
 
 def main():
     setup_logging()
