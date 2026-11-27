@@ -179,12 +179,18 @@ def export_full_excel(output_path: str = None) -> Tuple[bool, str]:
 
         ws_class.freeze_panes = "A2"
 
-        # Tu dong can chinh do rong cot (Auto-width)
-        for sheet in [ws_log, ws_teacher, ws_class]:
-            for col in sheet.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
-                col_letter = get_column_letter(col[0].column)
-                sheet.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 35)
+        # Can chinh do rong cot co dinh toi uu toc do (tranh loop hang ngan cell gay cham ung dung)
+        col_widths_log = [8, 19, 14, 22, 12, 14, 32, 10, 10, 14, 10, 12, 22, 10, 14, 12, 14, 16, 10, 16, 12, 12, 20, 30]
+        for col_idx, width in enumerate(col_widths_log, start=1):
+            ws_log.column_dimensions[get_column_letter(col_idx)].width = width
+
+        col_widths_teacher = [10, 25, 20, 14, 15, 18, 25]
+        for col_idx, width in enumerate(col_widths_teacher, start=1):
+            ws_teacher.column_dimensions[get_column_letter(col_idx)].width = width
+
+        col_widths_class = [12, 12, 14, 15, 18]
+        for col_idx, width in enumerate(col_widths_class, start=1):
+            ws_class.column_dimensions[get_column_letter(col_idx)].width = width
 
         wb.save(output_path)
         logger.info(f"Da xuat thanh cong file Excel tong hop tai: {output_path}")
@@ -209,3 +215,10 @@ def append_job_to_excel(job_id: int) -> bool:
     # Neu khong bi khoa, xuat lai de cap nhat du lieu moi nhat
     success, _ = export_full_excel(excel_path)
     return success
+
+import threading
+
+def append_job_to_excel_async(job_id: int):
+    """Ghi vao file Excel trong luong rieng (background thread) giup UI luon muot ma 100%"""
+    t = threading.Thread(target=append_job_to_excel, args=(job_id,), daemon=True)
+    t.start()

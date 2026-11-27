@@ -1,6 +1,11 @@
-# 🖨️ PHẦN MỀM QUẢN LÝ IN ẤN ĐỀ THI & TÀI LIỆU (THPT)
+# 🖨️ PHẦN MỀM QUẢN LÝ IN ẤN
 
 > **Giải pháp tối ưu hóa quy trình in ấn tại trường học:** Chỉ với 1 thao tác kéo thả file và bấm in, hệ thống tự động lưu bản sao khoa học, tính tiền, ghi nhật ký và đồng bộ vào file Excel tổng hợp phục vụ đối soát, thu tiền cuối kỳ.
+
+- **Tác giả:** Phạm Công Vinh
+- **Chức vụ:** Bí thư chi đoàn 11A5, Chủ tịch CLB Nghiên cứu Khoa học, STEM và Robotics
+- **Đơn vị:** Trường THPT Bắc Đông Quan
+- **Bản quyền:** © 2026 Phạm Công Vinh - Trường THPT Bắc Đông Quan. All rights reserved.
 
 [![GitHub release](https://img.shields.io/github/v/release/bunreal210/QuanLyInAnTHPT?color=blue&label=B%E1%BA%A3n%20ph%C3%A1t%20h%C3%A0nh)](https://github.com/bunreal210/QuanLyInAnTHPT/releases/tag/v1.0.0)
 [![Platform](https://img.shields.io/badge/N%E1%BB%81n%20t%E1%BA%A3ng-Windows%2010%20%2F%2011-0078D6?logo=windows)](https://github.com/bunreal210/QuanLyInAnTHPT)
@@ -24,14 +29,18 @@ Tại các trường THPT, giáo viên kiêm phụ trách in ấn mỗi ngày nh
 
 ---
 
-## 🚀 Tải về và Dùng ngay (Không cần cài đặt)
+## 🚀 Tải về và Cài đặt
 
-Người dùng không rành công nghệ chỉ cần tải bản chạy sẵn:
+Người dùng có thể lựa chọn 1 trong các hình thức phù hợp:
 
-👉 **[Tải file chạy ứng dụng tại mục GitHub Releases (v1.0.0)](https://github.com/bunreal210/QuanLyInAnTHPT/releases/tag/v1.0.0)**
+👉 **[Tải phần mềm tại mục GitHub Releases (v1.0.0)](https://github.com/bunreal210/QuanLyInAnTHPT/releases/tag/v1.0.0)**
 
-- **`QuanLyInAnTHPT_SingleFile.exe`**: Đúng 1 file duy nhất, tải về nhấp đúp là chạy ngay lập tức.
-- **`QuanLyInAnTHPT_v1.0.0_Windows_Portable.zip`**: Bản nén Portable trọn gói, giải nén ra nhấp đúp file chạy để mở siêu tốc dưới 1 giây.
+- 🌟 **`QuanLyInAn_Setup_v1.0.0.exe` (Khuyên dùng):** Trình cài đặt hoàn chỉnh tiêu chuẩn Windows (Setup Wizard).
+  - Tự động tạo biểu tượng ngoài màn hình Desktop và trong Start Menu.
+  - Tích hợp trình gỡ cài đặt sạch sẽ (Uninstaller) trong Windows Settings / Control Panel.
+  - Tối ưu dung lượng tải về (~108 MB với nén LZMA2 Ultra), giải nén chạy tức thì < 1 giây, không bị giật lag hay giải nén tạm.
+- **`QuanLyInAn_SingleFile.exe`**: Đúng 1 file duy nhất, tải về nhấp đúp là chạy ngay (thích hợp copy vào USB mang đi máy khác dùng tạm).
+- **`QuanLyInAn_Windows_Portable.zip`**: Bản nén Portable trọn gói, giải nén ra nhấp đúp file chạy để mở siêu tốc dưới 1 giây.
 
 ---
 
@@ -155,5 +164,10 @@ QuanLyInAnTHPT/
 
 ---
 
-## 📝 Giấy phép
+## 📝 Bản quyền & Tác giả
+- **Tên phần mềm:** Quản lý in ấn
+- **Tác giả:** Phạm Công Vinh
+- **Chức vụ:** Bí thư chi đoàn 11A5, Chủ tịch CLB Nghiên cứu Khoa học, STEM và Robotics
+- **Đơn vị công tác:** Trường THPT Bắc Đông Quan
+- **Bản quyền:** © 2026 Phạm Công Vinh - Trường THPT Bắc Đông Quan. All rights reserved.
 Phần mềm phát triển phục vụ công tác in ấn trong ngành giáo dục. Mọi cá nhân, nhà trường đều có thể sử dụng và đóng góp phát triển miễn phí!

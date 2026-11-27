@@ -7,23 +7,24 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QPushButton, QCheckBox, QGroupBox, QTextEdit,
     QMessageBox, QSpinBox, QFileDialog, QTableWidget, QTableWidgetItem,
     QHeaderView, QTabWidget, QSplitter, QFrame, QScrollArea, QAbstractItemView,
-    QProgressBar, QDialog
+    QProgressBar, QDialog, QMenu
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize
-from PySide6.QtGui import QFont, QIcon, QPixmap, QColor
+from PySide6.QtGui import QFont, QIcon, QPixmap, QColor, QImage
 
 from app.services.converter import (
-    convert_to_pdf, count_pages, render_page_thumbnail, parse_page_ranges,
-    extract_pages_to_new_pdf
+    convert_to_pdf, count_pages, render_page_thumbnail, render_page_pixmap_data,
+    parse_page_ranges, extract_pages_to_new_pdf,
+    WordBatchConverter, ExcelBatchConverter
 )
 from app.services.booklet import create_booklet_pdf
 from app.services.printer import (
     list_windows_printers, build_sumatra_print_settings, execute_sumatra_print,
-    open_windows_print_dialog
+    open_windows_print_dialog, open_printer_preferences_dialog, open_printer_device_settings_dialog
 )
 from app.services.storage import organize_and_save_files
 from app.services.pricing import calculate_print_cost
-from app.services.excel_sync import export_full_excel, append_job_to_excel
+from app.services.excel_sync import export_full_excel, append_job_to_excel, append_job_to_excel_async
 from app.services.cloud_sync import (
     get_cloud_sync_folder, set_cloud_sync_folder, sync_both_ways
 )
@@ -35,7 +36,7 @@ from app.services.receipt import generate_receipt_pdf
 from app.services.backup import create_database_backup, restore_database_from_backup
 from app.db.connection import get_machine_name, get_connection
 from app.db.models import (
-    get_requesters, search_requesters, get_recent_requester_ids,
+    get_requesters, search_requesters, get_recent_requester_ids, get_cached_requesters,
     get_printers, get_presets, get_setting, set_setting,
     create_print_job, update_print_job_status, add_requester,
     get_all_price_rules, update_price_rule_amount, add_price_rule,
@@ -256,9 +257,12 @@ class FullscreenPreviewDialog(QDialog):
 
     def render_page(self):
         dpi = int(120 * self.zoom)
-        thumb_path = render_page_thumbnail(self.pdf_path, self.current_page, dpi=dpi)
-        if thumb_path and os.path.exists(thumb_path):
-            pixmap = QPixmap(thumb_path)
+        data = render_page_pixmap_data(self.pdf_path, self.current_page, dpi=dpi)
+        if data:
+            samples, w, h, s, a = data
+            fmt = QImage.Format_RGBA8888 if a else QImage.Format_RGB888
+            qimg = QImage(samples, w, h, s, fmt).copy()
+            pixmap = QPixmap.fromImage(qimg)
             self.lbl_image.setPixmap(pixmap)
             self.lbl_page.setText(f"Trang {self.current_page} / {self.total_pages}")
         self.btn_prev.setEnabled(self.current_page > 1)
@@ -294,7 +298,7 @@ class FullscreenPreviewDialog(QDialog):
 
 
 class FileConvertWorker(QThread):
-    """Tiến trình chuyển đổi tài liệu ngầm, không làm treo giao diện người dùng"""
+    """Tiến trình chuyển đổi tài liệu ngầm, tối ưu tốc độ bằng session COM dùng chung"""
     file_converted_signal = Signal(dict)
     progress_signal = Signal(int, int)
     all_done_signal = Signal()
@@ -305,26 +309,57 @@ class FileConvertWorker(QThread):
 
     def run(self):
         total = len(self.file_paths)
-        for idx, p in enumerate(self.file_paths):
-            ext = os.path.splitext(p)[1].lower()
-            base_name = os.path.basename(p)
-            try:
-                ok, pdf_path, err = convert_to_pdf(p)
-                pages = count_pages(pdf_path) if ok else 1
-            except Exception as e:
-                ok, pdf_path, err, pages = False, "", str(e), 1
+        has_word = any(os.path.splitext(p)[1].lower() in [".doc", ".docx"] for p in self.file_paths)
+        has_excel = any(os.path.splitext(p)[1].lower() in [".xls", ".xlsx"] for p in self.file_paths)
 
-            item = {
-                "original_path": p,
-                "pdf_path": pdf_path if ok else "",
-                "file_name": base_name,
-                "ext": ext,
-                "pages": pages,
-                "convert_ok": ok,
-                "convert_error": err
-            }
-            self.file_converted_signal.emit(item)
-            self.progress_signal.emit(idx + 1, total)
+        word_converter = WordBatchConverter() if has_word else None
+        excel_converter = ExcelBatchConverter() if has_excel else None
+
+        try:
+            if word_converter:
+                word_converter.__enter__()
+            if excel_converter:
+                excel_converter.__enter__()
+
+            for idx, p in enumerate(self.file_paths):
+                ext = os.path.splitext(p)[1].lower()
+                base_name = os.path.basename(p)
+                try:
+                    if ext in [".doc", ".docx"] and word_converter and word_converter.word:
+                        from app.services.converter import TEMP_PDF_DIR
+                        out_pdf = os.path.join(TEMP_PDF_DIR, f"{os.path.splitext(base_name)[0]}_{abs(hash(p)) % 1000000}.pdf")
+                        ok = word_converter.convert(p, out_pdf)
+                        pdf_path = out_pdf if ok else ""
+                        err = "" if ok else "Không thể chuyển đổi Word sang PDF."
+                    elif ext in [".xls", ".xlsx"] and excel_converter and excel_converter.excel:
+                        from app.services.converter import TEMP_PDF_DIR
+                        out_pdf = os.path.join(TEMP_PDF_DIR, f"{os.path.splitext(base_name)[0]}_{abs(hash(p)) % 1000000}.pdf")
+                        ok = excel_converter.convert(p, out_pdf)
+                        pdf_path = out_pdf if ok else ""
+                        err = "" if ok else "Không thể chuyển đổi Excel sang PDF."
+                    else:
+                        ok, pdf_path, err = convert_to_pdf(p)
+
+                    pages = count_pages(pdf_path) if ok else 1
+                except Exception as e:
+                    ok, pdf_path, err, pages = False, "", str(e), 1
+
+                item = {
+                    "original_path": p,
+                    "pdf_path": pdf_path if ok else "",
+                    "file_name": base_name,
+                    "ext": ext,
+                    "pages": pages,
+                    "convert_ok": ok,
+                    "convert_error": err
+                }
+                self.file_converted_signal.emit(item)
+                self.progress_signal.emit(idx + 1, total)
+        finally:
+            if word_converter:
+                word_converter.__exit__(None, None, None)
+            if excel_converter:
+                excel_converter.__exit__(None, None, None)
 
         self.all_done_signal.emit()
 
@@ -441,7 +476,6 @@ class BatchPrintWorker(QThread):
 
                 if res.get("success"):
                     update_print_job_status(job_id, "printed")
-                    append_job_to_excel(job_id)
                     success_count += 1
                     total_sheets += cost_info['total_sheets']
                     total_amount += cost_info['amount']
@@ -454,6 +488,13 @@ class BatchPrintWorker(QThread):
             except Exception as e:
                 failed_count += 1
                 self.item_status_signal.emit(queue_idx, f"❌ Lỗi: {e}", "#dc2626")
+
+        # Đồng bộ Excel 1 lần duy nhất cho toàn bộ lô in thay vì ghi đè liên tục
+        if success_count > 0:
+            try:
+                export_full_excel()
+            except Exception as ex_err:
+                pass
 
         self.finished_signal.emit({
             "total": total,
@@ -544,8 +585,14 @@ class BackgroundPrintWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"Phần mềm Quản lý In ấn Đề - THPT [{get_machine_name()}]")
+        self.setWindowTitle(f"Quản lý in ấn - Trường THPT Bắc Đông Quan [{get_machine_name()}]")
         self.resize(1300, 820)
+
+        # Dat icon cua so va taskbar
+        from app.main import get_app_icon_path
+        icon_path = get_app_icon_path()
+        if icon_path:
+            self.setWindowIcon(QIcon(icon_path))
 
         self.current_queue = [] # Danh sach cac file trong hang doi
         self.selected_file_index = -1
@@ -554,6 +601,11 @@ class MainWindow(QMainWindow):
         self.current_pdf_for_preview = None
         self.preview_cache = {} # Cache thumbnail: (pdf_path, page, zoom) -> QPixmap
         self.zoom_factor = 1.0
+
+        # Co che Lazy Tab Loading de may yeu khoi dong sieu toc
+        self._loaded_tabs = set()
+        self._dirty_history = False
+        self._dirty_reports = False
 
         self.setStyleSheet(MODERN_STYLE)
         self.init_ui()
@@ -602,10 +654,12 @@ class MainWindow(QMainWindow):
         self.init_tab_settings()
         self.tabs.addTab(self.tab_settings, "⚙️ Cài đặt & Danh mục")
 
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+
         main_layout.addWidget(self.tabs)
 
         # Status Bar dưới cùng
-        self.status_bar_label = QLabel(f"Sẵn sàng | Máy tính: {get_machine_name()} | SQLite WAL")
+        self.status_bar_label = QLabel(f"Quản lý in ấn | Tác giả: Phạm Công Vinh (THPT Bắc Đông Quan) | Máy tính: {get_machine_name()}")
         self.statusBar().addWidget(self.status_bar_label)
 
     # ==================== TAB 1: IN ẤN & HÀNG ĐỢI ====================
@@ -721,9 +775,37 @@ class MainWindow(QMainWindow):
         print_grid = QGridLayout(grp_print)
 
         print_grid.addWidget(QLabel("Máy in:"), 0, 0)
+        printer_h_layout = QHBoxLayout()
         self.cb_printers = QComboBox()
         self.cb_printers.currentIndexChanged.connect(self.recalculate_cost)
-        print_grid.addWidget(self.cb_printers, 0, 1)
+        printer_h_layout.addWidget(self.cb_printers, 1)
+
+        self.btn_printer_properties = QPushButton("⚙️ Cấu hình máy in (Properties)...")
+        self.btn_printer_properties.setStyleSheet("""
+            QPushButton {
+                background-color: #0284c7;
+                color: white;
+                font-weight: bold;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #0369a1; }
+        """)
+        self.btn_printer_properties.setToolTip("Mở bảng tùy chọn driver máy in (Printing Preferences) để cấu hình sâu: Bộ dập ghim (Stapler), đục lỗ, khay giấy dày...")
+
+        # Menu tùy chọn cấu hình in sâu
+        prop_menu = QMenu(self)
+        act_preferences = prop_menu.addAction("📑 Tùy chọn in (Dập ghim, Khay giấy, Chế độ in)...")
+        act_preferences.triggered.connect(lambda: self.open_selected_printer_properties(mode="preferences"))
+        act_properties = prop_menu.addAction("🛠️ Thuộc tính thiết bị (Cấu hình phần cứng Finisher)...")
+        act_properties.triggered.connect(lambda: self.open_selected_printer_properties(mode="properties"))
+        prop_menu.addSeparator()
+        act_refresh_printers = prop_menu.addAction("🔄 Làm mới danh sách máy in")
+        act_refresh_printers.triggered.connect(self.refresh_printers_dropdown)
+        self.btn_printer_properties.setMenu(prop_menu)
+
+        printer_h_layout.addWidget(self.btn_printer_properties)
+        print_grid.addLayout(printer_h_layout, 0, 1)
 
         print_grid.addWidget(QLabel("Khổ giấy:"), 1, 0)
         self.cb_paper = QComboBox()
@@ -764,6 +846,11 @@ class MainWindow(QMainWindow):
         self.txt_job_note = QLineEdit()
         self.txt_job_note.setPlaceholderText("Vd: Đề thi khảo sát chung, Phiếu bài tập...")
         print_grid.addWidget(self.txt_job_note, 6, 1)
+
+        lbl_finisher_tip = QLabel("💡 <i>Máy có bộ dập ghim Finisher: bấm <b>'⚙️ Cấu hình máy in (Properties)'</b> ở trên để chọn dập 1 ghim, 2 ghim hoặc dập ghim giữa Booklet (Saddle Stitch).</i>")
+        lbl_finisher_tip.setStyleSheet("color: #0284c7; font-size: 9pt;")
+        lbl_finisher_tip.setWordWrap(True)
+        print_grid.addWidget(lbl_finisher_tip, 7, 0, 1, 2)
 
         mid_layout.addWidget(grp_print)
 
@@ -1316,21 +1403,74 @@ class MainWindow(QMainWindow):
 
         vbox.addWidget(grp_backup)
 
-        scroll.setWidget(container)
-        layout.addWidget(scroll)
+        # --- PHẦN 5: BẢN QUYỀN & THÔNG TIN TÁC GIẢ ---
+        grp_about = QGroupBox("5. Bản quyền phần mềm & Thông tin tác giả")
+        about_vbox = QVBoxLayout(grp_about)
+        about_vbox.setContentsMargins(16, 20, 16, 16)
+        about_vbox.setSpacing(8)
 
-        lbl_backup_info = QLabel("Khuyên dùng: Nên bấm sao lưu định kỳ hoặc trước khi cài lại Windows / chuyển máy.")
-        lbl_backup_info.setStyleSheet("color: #64748b; font-style: italic;")
-        backup_vbox.addWidget(lbl_backup_info)
+        lbl_app_title = QLabel("🖨️ PHẦN MỀM QUẢN LÝ IN ẤN")
+        lbl_app_title.setStyleSheet("font-size: 13pt; font-weight: bold; color: #1e40af;")
+        about_vbox.addWidget(lbl_app_title)
 
-        vbox.addWidget(grp_backup)
+        lbl_author = QLabel("• <b>Tác giả:</b> Phạm Công Vinh")
+        lbl_author.setStyleSheet("font-size: 11pt; color: #1e293b;")
+        about_vbox.addWidget(lbl_author)
+
+        lbl_role = QLabel("• <b>Chức vụ:</b> Bí thư chi đoàn 11A5, Chủ tịch CLB Nghiên cứu Khoa học, STEM và Robotics")
+        lbl_role.setStyleSheet("font-size: 11pt; color: #1e293b;")
+        about_vbox.addWidget(lbl_role)
+
+        lbl_unit = QLabel("• <b>Đơn vị:</b> Trường THPT Bắc Đông Quan")
+        lbl_unit.setStyleSheet("font-size: 11pt; color: #1e293b;")
+        about_vbox.addWidget(lbl_unit)
+
+        lbl_version = QLabel("• <b>Phiên bản:</b> v1.0.0 (Bản chính thức)")
+        lbl_version.setStyleSheet("font-size: 10.5pt; color: #475569;")
+        about_vbox.addWidget(lbl_version)
+
+        lbl_copyright = QLabel("• <b>Bản quyền:</b> © 2026 Phạm Công Vinh - Trường THPT Bắc Đông Quan. All rights reserved.")
+        lbl_copyright.setStyleSheet("font-size: 10pt; color: #64748b; font-style: italic;")
+        about_vbox.addWidget(lbl_copyright)
+
+        vbox.addWidget(grp_about)
 
         scroll.setWidget(container)
         layout.addWidget(scroll)
 
     # ==================== DATA LOADING & LOGIC ====================
+    def on_tab_changed(self, index):
+        """Lazy loading: Chi nap du lieu tab khi nguoi dung nhap vao, giup may yeu mo app duoi 0.3 giay"""
+        if index == 1 and (1 not in self._loaded_tabs or self._dirty_history):
+            self.load_history_data()
+            self._loaded_tabs.add(1)
+            self._dirty_history = False
+        elif index == 2 and (2 not in self._loaded_tabs or self._dirty_reports):
+            self.load_report_data()
+            self._loaded_tabs.add(2)
+            self._dirty_reports = False
+        elif index == 3 and 3 not in self._loaded_tabs:
+            self.load_prices_table()
+            self._loaded_tabs.add(3)
+        elif index == 5 and 5 not in self._loaded_tabs:
+            self.load_classes_table()
+            self.load_teachers_table()
+            self._loaded_tabs.add(5)
+
+    def mark_history_and_reports_dirty(self):
+        """Danh dau can lam moi Lich su & Bao cao khi nguoi dung thuc hien in hoac doi trang thai"""
+        self._dirty_history = True
+        self._dirty_reports = True
+        current_idx = self.tabs.currentIndex()
+        if current_idx == 1:
+            self.load_history_data()
+            self._dirty_history = False
+        elif current_idx == 2:
+            self.load_report_data()
+            self._dirty_reports = False
+
     def load_initial_data(self):
-        # 1. Load danh sách máy in
+        # 1. Load danh sách máy in (được cache)
         self.cb_printers.clear()
         printers = list_windows_printers()
         default_idx = 0
@@ -1348,20 +1488,53 @@ class MainWindow(QMainWindow):
         for pr in presets:
             self.cb_presets.addItem(pr['name'], pr)
 
-        # 3. Load Requesters
+        # 3. Load Requesters từ RAM cache
         self.load_requesters_dropdown()
 
         # 4. Load 3 người gần đây
         self.update_recent_requester_buttons()
 
-        # 5. Load Tab Lịch sử & Báo cáo
-        self.load_history_data()
-        self.load_report_data()
+        # Đánh dấu Tab 0 đã sẵn sàng; các tab khác chỉ nạp khi người dùng bấm vào
+        self._loaded_tabs.add(0)
 
-        # 6. Load Bảng giá & Danh mục Lớp, Giáo viên
-        self.load_prices_table()
-        self.load_classes_table()
-        self.load_teachers_table()
+    def get_selected_printer_name(self) -> str:
+        """Lay ten may in Windows thuc te dang duoc chon"""
+        printer_item = self.cb_printers.currentData()
+        if printer_item and isinstance(printer_item, dict):
+            return printer_item.get("windows_name", self.cb_printers.currentText())
+        return self.cb_printers.currentText()
+
+    def open_selected_printer_properties(self, mode="preferences"):
+        """Mo hop thoai Driver Properties de nguoi dung cau hinh dap ghim (Finisher), khay giay, duc lo..."""
+        pname = self.get_selected_printer_name()
+        if not pname:
+            QMessageBox.warning(self, "Thông báo", "Vui lòng chọn một máy in trước!")
+            return
+
+        if mode == "properties":
+            ok = open_printer_device_settings_dialog(pname)
+            desc = "Thuộc tính thiết bị (Printer Properties)"
+        else:
+            ok = open_printer_preferences_dialog(pname)
+            desc = "Tùy chọn in (Printing Preferences - Dập ghim, khay giấy)"
+
+        if ok:
+            self.status_bar_label.setText(f"💡 Đang mở {desc} của máy in: {pname}")
+        else:
+            QMessageBox.critical(self, "Lỗi", f"Không thể mở cửa sổ cấu hình máy in cho '{pname}'.")
+
+    def refresh_printers_dropdown(self):
+        """Quet lai danh sach may in tren Windows"""
+        printers = list_windows_printers(force_refresh=True)
+        self.cb_printers.clear()
+        default_idx = 0
+        for idx, p in enumerate(printers):
+            self.cb_printers.addItem(p['display_name'], p)
+            if p.get('is_default'):
+                default_idx = idx
+        if printers:
+            self.cb_printers.setCurrentIndex(default_idx)
+        self.status_bar_label.setText(f"Đã làm mới danh sách máy in: tìm thấy {len(printers)} máy in.")
 
     def load_requesters_dropdown(self, keyword=""):
         self.cb_requesters.blockSignals(True)
@@ -1385,7 +1558,7 @@ class MainWindow(QMainWindow):
 
     def update_recent_requester_buttons(self):
         recent_ids = get_recent_requester_ids(limit=3)
-        all_reqs = {r['id']: r for r in get_requesters()}
+        all_reqs = {r['id']: r for r in get_cached_requesters(active_only=False)}
         buttons = [self.btn_recent_1, self.btn_recent_2, self.btn_recent_3]
         for i, b in enumerate(buttons):
             if i < len(recent_ids) and recent_ids[i] in all_reqs:
@@ -1422,13 +1595,14 @@ class MainWindow(QMainWindow):
     # ==================== LOGIC BẢNG GIÁ ====================
     def load_prices_table(self):
         prices = get_all_price_rules()
-        self.table_prices.setRowCount(0)
+        self.table_prices.setUpdatesEnabled(False)
+        self.table_prices.clearContents()
+        self.table_prices.setRowCount(len(prices))
         color_map = {0: "Đen trắng", 1: "In màu"}
         duplex_map = {0: "1 mặt", 1: "2 mặt"}
         unit_map = {"sheet": "đ / tờ", "page": "đ / mặt"}
 
         for idx, p in enumerate(prices):
-            self.table_prices.insertRow(idx)
             self.table_prices.setItem(idx, 0, QTableWidgetItem(str(p['id'])))
             self.table_prices.setItem(idx, 1, QTableWidgetItem(str(p['paper'])))
             self.table_prices.setItem(idx, 2, QTableWidgetItem(color_map.get(p['color'], "Đen trắng")))
@@ -1436,6 +1610,7 @@ class MainWindow(QMainWindow):
             self.table_prices.setItem(idx, 4, QTableWidgetItem(str(p.get('printer_name') or "Tất cả máy in")))
             self.table_prices.setItem(idx, 5, QTableWidgetItem(f"{p['price_per_unit']:,.0f}"))
             self.table_prices.setItem(idx, 6, QTableWidgetItem(unit_map.get(p['unit_type'], "đ / tờ")))
+        self.table_prices.setUpdatesEnabled(True)
 
     def on_price_table_selected(self):
         selected = self.table_prices.selectedItems()
@@ -1499,14 +1674,16 @@ class MainWindow(QMainWindow):
             cur = conn.cursor()
             cur.execute("SELECT id, grade, name, student_count, note FROM requesters WHERE type = 'class' ORDER BY grade ASC, name ASC")
             classes = cur.fetchall()
-            self.table_classes.setRowCount(0)
+            self.table_classes.setUpdatesEnabled(False)
+            self.table_classes.clearContents()
+            self.table_classes.setRowCount(len(classes))
             for idx, c in enumerate(classes):
-                self.table_classes.insertRow(idx)
                 self.table_classes.setItem(idx, 0, QTableWidgetItem(str(c[0])))
                 self.table_classes.setItem(idx, 1, QTableWidgetItem(f"Khối {c[1]}" if c[1] else ""))
                 self.table_classes.setItem(idx, 2, QTableWidgetItem(str(c[2])))
                 self.table_classes.setItem(idx, 3, QTableWidgetItem(f"{c[3]} học sinh" if c[3] else "Chưa có"))
                 self.table_classes.setItem(idx, 4, QTableWidgetItem(str(c[4] or "")))
+            self.table_classes.setUpdatesEnabled(True)
         finally:
             conn.close()
 
@@ -1573,13 +1750,15 @@ class MainWindow(QMainWindow):
             cur = conn.cursor()
             cur.execute("SELECT id, name, department, note FROM requesters WHERE type = 'teacher' AND active = 1 ORDER BY name ASC")
             teachers = cur.fetchall()
-            self.table_teachers.setRowCount(0)
+            self.table_teachers.setUpdatesEnabled(False)
+            self.table_teachers.clearContents()
+            self.table_teachers.setRowCount(len(teachers))
             for idx, t in enumerate(teachers):
-                self.table_teachers.insertRow(idx)
                 self.table_teachers.setItem(idx, 0, QTableWidgetItem(str(t[0])))
                 self.table_teachers.setItem(idx, 1, QTableWidgetItem(str(t[1])))
                 self.table_teachers.setItem(idx, 2, QTableWidgetItem(str(t[2] or "")))
                 self.table_teachers.setItem(idx, 3, QTableWidgetItem(str(t[3] or "")))
+            self.table_teachers.setUpdatesEnabled(True)
         finally:
             conn.close()
 
@@ -1733,19 +1912,25 @@ class MainWindow(QMainWindow):
         if cache_key in self.preview_cache:
             pixmap = self.preview_cache[cache_key]
         else:
-            dpi = int(120 * self.zoom_factor)
-            thumb_path = render_page_thumbnail(self.current_pdf_for_preview, self.current_preview_page, dpi=dpi)
-            if thumb_path and os.path.exists(thumb_path):
-                pixmap = QPixmap(thumb_path)
-                if len(self.preview_cache) > 40:
+            # 75 DPI la do phan giai toi uu cho o preview (~350px), tiet kiem 70% CPU va RAM cho may yeu
+            dpi = int(75 * self.zoom_factor)
+            data = render_page_pixmap_data(self.current_pdf_for_preview, self.current_preview_page, dpi=dpi)
+            if data:
+                samples, w, h, s, a = data
+                fmt = QImage.Format_RGBA8888 if a else QImage.Format_RGB888
+                qimg = QImage(samples, w, h, s, fmt).copy()
+                pixmap = QPixmap.fromImage(qimg)
+                # Giu toi da 15 trang cache de khong tran RAM may yeu (chiem duoi 20MB)
+                if len(self.preview_cache) > 15:
                     self.preview_cache.pop(next(iter(self.preview_cache)))
                 self.preview_cache[cache_key] = pixmap
             else:
                 pixmap = None
 
         if pixmap and not pixmap.isNull():
+            transform_mode = Qt.FastTransformation if self.zoom_factor <= 1.0 else Qt.SmoothTransformation
             self.lbl_preview_img.setPixmap(
-                pixmap.scaled(self.lbl_preview_img.width() - 10, self.lbl_preview_img.height() - 10, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap.scaled(self.lbl_preview_img.width() - 10, self.lbl_preview_img.height() - 10, Qt.KeepAspectRatio, transform_mode)
             )
             self.lbl_page_indicator.setText(f"Trang {self.current_preview_page} / {self.total_preview_pages}")
             self.btn_zoom_reset.setText(f"{int(self.zoom_factor * 100)}%")
@@ -1931,8 +2116,7 @@ class MainWindow(QMainWindow):
         )
 
         # 5. Ghi nhật ký vào SQLite trước
-        printer_item = self.cb_printers.currentData()
-        printer_name = printer_item['windows_name'] if printer_item else self.cb_printers.currentText()
+        printer_name = self.get_selected_printer_name()
 
         job_data = {
             "requester_id": req_data['id'],
@@ -1967,10 +2151,9 @@ class MainWindow(QMainWindow):
         # 6. Nếu chỉ ghi sổ (không in qua máy)
         if mode == "save_only":
             update_print_job_status(job_id, "printed")
-            append_job_to_excel(job_id)
+            append_job_to_excel_async(job_id)
             QMessageBox.information(self, "Thành công", f"Đã ghi sổ thủ công lượt in #{job_id} thành công!\nSố tờ: {cost_info['total_sheets']} | Thành tiền: {final_amount:,.0f} đ")
-            self.load_history_data()
-            self.load_report_data()
+            self.mark_history_and_reports_dirty()
             return
 
         # 7. Gửi lệnh in (ngầm qua SumatraPDF hoặc mở cửa sổ Windows)
@@ -2007,7 +2190,7 @@ class MainWindow(QMainWindow):
 
         if res.get("success"):
             update_print_job_status(job_id, "printed")
-            append_job_to_excel(job_id)
+            append_job_to_excel_async(job_id)
             if mode == "dialog":
                 QMessageBox.information(
                     self, "Hoàn thành",
@@ -2030,8 +2213,7 @@ class MainWindow(QMainWindow):
                 update_print_job_status(job_id, "error", res.get("error"))
                 QMessageBox.critical(self, "Lỗi in", f"Lỗi gửi lệnh in #{job_id}:\n{res.get('error')}\n(Bản ghi vẫn được lưu trong lịch sử để bạn thử lại)")
 
-        self.load_history_data()
-        self.load_report_data()
+        self.mark_history_and_reports_dirty()
         self.update_recent_requester_buttons()
 
     def execute_batch_print_all(self):
@@ -2055,8 +2237,7 @@ class MainWindow(QMainWindow):
         duplex_val = self.cb_duplex.currentData()
         color = self.cb_color.currentData()
         is_booklet = (duplex_val == 3)
-        printer_item = self.cb_printers.currentData()
-        printer_name = printer_item['windows_name'] if printer_item else self.cb_printers.currentText()
+        printer_name = self.get_selected_printer_name()
 
         est_sheets = 0
         est_amount = 0.0
@@ -2136,8 +2317,7 @@ class MainWindow(QMainWindow):
 
         play_alert_sound()
 
-        self.load_history_data()
-        self.load_report_data()
+        self.mark_history_and_reports_dirty()
         self.update_recent_requester_buttons()
 
         QMessageBox.information(
@@ -2264,12 +2444,13 @@ class MainWindow(QMainWindow):
             cur.execute(query, params)
             rows = cur.fetchall()
 
-            self.table_history.setRowCount(0)
+            self.table_history.setUpdatesEnabled(False)
+            self.table_history.clearContents()
+            self.table_history.setRowCount(len(rows))
             status_vn = {"printed": "Đã gửi in", "pending": "Chờ", "error": "Lỗi", "cancelled": "Đã hủy"}
             paid_vn = {"unpaid": "Chưa thu", "paid": "Đã thu"}
 
             for row_idx, r in enumerate(rows):
-                self.table_history.insertRow(row_idx)
                 self.table_history.setItem(row_idx, 0, QTableWidgetItem(str(r[0])))
                 self.table_history.setItem(row_idx, 1, QTableWidgetItem(str(r[1])))
                 self.table_history.setItem(row_idx, 2, QTableWidgetItem(str(r[2] or "")))
@@ -2283,7 +2464,10 @@ class MainWindow(QMainWindow):
                 self.table_history.setItem(row_idx, 10, QTableWidgetItem(status_vn.get(r[10], r[10])))
                 self.table_history.setItem(row_idx, 11, QTableWidgetItem(paid_vn.get(r[11], r[11])))
                 # Lưu saved_path vào item data
-                self.table_history.item(row_idx, 0).setData(Qt.UserRole, r[12])
+                item_0 = self.table_history.item(row_idx, 0)
+                if item_0:
+                    item_0.setData(Qt.UserRole, r[12])
+            self.table_history.setUpdatesEnabled(True)
         finally:
             conn.close()
 
@@ -2351,11 +2535,12 @@ class MainWindow(QMainWindow):
         time_range = self.cb_report_time.currentData()
         req_reports = get_report_by_requesters(time_range)
 
-        self.table_report.setRowCount(0)
+        self.table_report.setUpdatesEnabled(False)
+        self.table_report.clearContents()
+        self.table_report.setRowCount(len(req_reports))
         type_vn = {"teacher": "Giáo viên", "class": "Lớp", "other": "Khác"}
 
         for idx, r in enumerate(req_reports):
-            self.table_report.insertRow(idx)
             self.table_report.setItem(idx, 0, QTableWidgetItem(str(r['id'])))
             self.table_report.setItem(idx, 1, QTableWidgetItem(r['name']))
             self.table_report.setItem(idx, 2, QTableWidgetItem(type_vn.get(r['type'], r['type'])))
@@ -2369,6 +2554,7 @@ class MainWindow(QMainWindow):
                 debt_item.setForeground(QColor("#dc2626"))
                 debt_item.setFont(QFont("Segoe UI", 9, QFont.Bold))
             self.table_report.setItem(idx, 7, debt_item)
+        self.table_report.setUpdatesEnabled(True)
 
     def mark_selected_requester_paid(self):
         selected = self.table_report.selectedItems()

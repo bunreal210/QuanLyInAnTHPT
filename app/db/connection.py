@@ -53,13 +53,17 @@ def set_database_path(new_path):
     init_db()
 
 def get_connection():
-    """Tao ket noi SQLite voi che do WAL va timeout phu hop da tien trinh/mang"""
+    """Tao ket noi SQLite voi che do WAL, cache toi uu may yeu va Memory-Mapped I/O doc dia HDD sieu toc"""
     db_path = get_database_path()
     conn = sqlite3.connect(db_path, timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA busy_timeout = 10000;")
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA cache_size = -16000;") # 16MB cache vua van khong chiem RAM may yeu
+    conn.execute("PRAGMA temp_store = MEMORY;")
+    conn.execute("PRAGMA mmap_size = 33554432;") # 32MB Memory-Mapped I/O tang toc doc CSDL tren o dia HDD
     return conn
 
 def init_db():
@@ -84,6 +88,12 @@ def init_db():
             if "student_count" not in cols:
                 conn.execute("ALTER TABLE requesters ADD COLUMN student_count INTEGER DEFAULT 0;")
                 logger.info("Da chay migration them cot student_count vao bang requesters.")
+
+            # Indexes toi uu hieu nang cho Dashboard & Bao cao
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_print_jobs_dashboard ON print_jobs(status, paid_status, is_free);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_print_jobs_created_status ON print_jobs(created_at, status);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_requesters_type_active ON requesters(type, active);")
+
             _seed_default_data(conn)
         logger.info(f"Khoi tao database thanh cong tai: {db_path}")
     finally:

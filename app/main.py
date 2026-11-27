@@ -39,6 +39,21 @@ from PySide6.QtGui import QFont
 from app.db.connection import init_db
 from app.ui.main_window import MainWindow
 
+def get_app_icon_path() -> str:
+    """Lay duong dan file icon ung dung ho tro ca khi chay truc tiep va khi dong goi exe"""
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icon.ico"),
+        os.path.join(getattr(sys, '_MEIPASS', ''), "app", "resources", "icon.ico"),
+        os.path.join(getattr(sys, '_MEIPASS', ''), "resources", "icon.ico"),
+        os.path.join(os.path.dirname(sys.executable), "app", "resources", "icon.ico"),
+        os.path.join(os.path.dirname(sys.executable), "resources", "icon.ico"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "resources", "icon.ico"),
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return ""
+
 def setup_logging():
     if getattr(sys, 'frozen', False):
         log_dir = os.path.dirname(sys.executable)
@@ -65,8 +80,24 @@ def main():
     except Exception as e:
         logger.error(f"Khong the khoi tao database: {e}", exc_info=True)
 
+    # Don dep ngam cac file rac temp cu ma khong lam cham khoi dong
+    try:
+        import threading
+        from app.services.converter import clean_old_temp_files
+        threading.Thread(target=clean_old_temp_files, daemon=True).start()
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
-    app.setApplicationName("Quản lý in ấn đề - THPT")
+    app.setApplicationName("Quản lý in ấn")
+    app.setApplicationDisplayName("Quản lý in ấn - Trường THPT Bắc Đông Quan")
+    app.setOrganizationName("Trường THPT Bắc Đông Quan")
+    app.setOrganizationDomain("thptbacdongquan.edu.vn")
+
+    icon_path = get_app_icon_path()
+    if icon_path:
+        from PySide6.QtGui import QIcon
+        app.setWindowIcon(QIcon(icon_path))
 
     # Ép kiểu giao diện Fusion và bảng màu Light Theme nhất quán, bất chấp Windows Dark Mode
     app.setStyle("Fusion")

@@ -47,6 +47,27 @@ def get_all_settings() -> dict:
         conn.close()
 
 # ==================== REQUESTERS ====================
+_REQUESTERS_CACHE = None
+
+def invalidate_requesters_cache():
+    """Xoa cache RAM danh sach nguoi yeu cau de nap lai khi co them/sua/nhap moi"""
+    global _REQUESTERS_CACHE
+    _REQUESTERS_CACHE = None
+
+def get_cached_requesters(active_only: bool = True) -> list:
+    """Lay danh sach nguoi yeu cau tu cache RAM giup tim kiem va tai giao dien 0ms"""
+    global _REQUESTERS_CACHE
+    if _REQUESTERS_CACHE is None:
+        raw_list = get_requesters(active_only=False)
+        for r in raw_list:
+            r['_name_clean'] = remove_accents(r['name'])
+            r['_dept_clean'] = remove_accents(r.get('department') or '')
+        _REQUESTERS_CACHE = raw_list
+
+    if active_only:
+        return [r for r in _REQUESTERS_CACHE if r.get('active', 1) == 1]
+    return _REQUESTERS_CACHE
+
 def get_requesters(requester_type: str = None, active_only: bool = True) -> list:
     conn = get_connection()
     try:
@@ -65,17 +86,15 @@ def get_requesters(requester_type: str = None, active_only: bool = True) -> list
         conn.close()
 
 def search_requesters(keyword: str, limit: int = 15) -> list:
-    """Tim kiem nguoi yeu cau khong dau (vd: 'lan' tim thay 'Nguyễn Thị Lan')"""
+    """Tim kiem nguoi yeu cau khong dau sieu toc hoan toan trong RAM (0ms)"""
+    all_reqs = get_cached_requesters(active_only=True)
     if not keyword:
-        return get_requesters(active_only=True)[:limit]
+        return all_reqs[:limit]
 
     kw_clean = remove_accents(keyword)
-    all_reqs = get_requesters(active_only=True)
     matches = []
     for r in all_reqs:
-        name_clean = remove_accents(r['name'])
-        dept_clean = remove_accents(r.get('department') or '')
-        if kw_clean in name_clean or kw_clean in dept_clean:
+        if kw_clean in r.get('_name_clean', '') or kw_clean in r.get('_dept_clean', ''):
             matches.append(r)
             if len(matches) >= limit:
                 break
@@ -105,6 +124,7 @@ def add_requester(name: str, req_type: str, department: str = None, grade: int =
                 "INSERT INTO requesters (name, type, department, grade, note) VALUES (?, ?, ?, ?, ?)",
                 (name.strip(), req_type, department.strip() if department else None, grade, note)
             )
+            invalidate_requesters_cache()
             return cur.lastrowid
     finally:
         conn.close()
@@ -117,6 +137,7 @@ def update_requester(req_id: int, name: str, department: str = None, grade: int 
                 "UPDATE requesters SET name = ?, department = ?, grade = ?, note = ?, active = ? WHERE id = ?",
                 (name.strip(), department.strip() if department else None, grade, note, active, req_id)
             )
+            invalidate_requesters_cache()
     finally:
         conn.close()
 
@@ -420,6 +441,7 @@ def import_classes_from_excel(file_path: str) -> tuple[int, str]:
                     )
                 count_success += 1
 
+        invalidate_requesters_cache()
         return count_success, f"Đã nhập thành công {count_success} lớp vào hệ thống."
     except Exception as e:
         return 0, f"Lỗi đọc file Excel: {str(e)}"
@@ -541,6 +563,7 @@ def import_teachers_from_excel(file_path: str) -> tuple[int, str]:
                     )
                 count_success += 1
 
+        invalidate_requesters_cache()
         return count_success, f"Đã nhập thành công {count_success} giáo viên vào hệ thống."
     except Exception as e:
         return 0, f"Lỗi đọc file Excel: {str(e)}"

@@ -54,7 +54,7 @@ def generate_receipt_pdf(
     department_or_grade: str,
     jobs: List[Dict[str, Any]],
     output_pdf_path: str,
-    school_name: str = "TRƯỜNG THPT CHUYÊN & THPT"
+    school_name: str = "TRƯỜNG THPT BẮC ĐÔNG QUAN"
 ) -> str:
     """
     Tao file PDF Phieu thu tien / Bien nhan in an chuan dep theo phong cach van ban hanh chinh truong hoc.

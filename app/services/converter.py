@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import logging
+import time
 from typing import Tuple, List, Optional
 from PIL import Image
 import pymupdf  # PyMuPDF
@@ -11,6 +12,23 @@ logger = logging.getLogger("print_manager.converter")
 APP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TEMP_PDF_DIR = os.path.join(APP_DIR, "data", "temp_pdf")
 os.makedirs(TEMP_PDF_DIR, exist_ok=True)
+
+def clean_old_temp_files(max_age_hours: int = 12):
+    """Tu dong don dep cac file rac tam thoi cu de giai phong dung luong o dia cho may yeu"""
+    try:
+        if not os.path.exists(TEMP_PDF_DIR):
+            return
+        now = time.time()
+        for f in os.listdir(TEMP_PDF_DIR):
+            fpath = os.path.join(TEMP_PDF_DIR, f)
+            if os.path.isfile(fpath):
+                if now - os.path.getmtime(fpath) > max_age_hours * 3600:
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.warning(f"Loi don dep file temp: {e}")
 
 # Tim kiem duong dan LibreOffice neu co tren may
 def find_libreoffice_path() -> Optional[str]:
@@ -280,6 +298,133 @@ def render_page_thumbnail(pdf_path: str, page_number_1based: int = 1, output_png
     except Exception as e:
         logger.error(f"Loi render preview PDF: {e}")
         return None
+
+def render_page_pixmap_data(pdf_path: str, page_number_1based: int = 1, dpi: int = 120) -> Optional[tuple]:
+    """
+    Render 1 trang PDF truc tiep tra ve (samples_bytes, width, height, stride, alpha) trong RAM.
+    Hoan toan khong ghi file xuong o dia, giup toc do xem truoc sieu toc va muot ma.
+    """
+    try:
+        doc = pymupdf.open(pdf_path)
+        if page_number_1based < 1 or page_number_1based > len(doc):
+            page_number_1based = 1
+        page = doc[page_number_1based - 1]
+        pix = page.get_pixmap(dpi=dpi)
+        samples = bytes(pix.samples)
+        w, h, s, a = pix.width, pix.height, pix.stride, pix.alpha
+        doc.close()
+        return (samples, w, h, s, a)
+    except Exception as e:
+        logger.error(f"Loi render preview PDF data: {e}")
+        return None
+
+class WordBatchConverter:
+    """Giu phien lam viec Word COM mo san de chuyen doi nhieu file Word cuc nhanh, khong bat tat Word lien tuc"""
+    def __init__(self):
+        self.word = None
+        self._pythoncom = None
+
+    def __enter__(self):
+        try:
+            import win32com.client
+            import pythoncom
+            self._pythoncom = pythoncom
+            self._pythoncom.CoInitialize()
+            self.word = win32com.client.DispatchEx("Word.Application")
+            self.word.Visible = False
+            self.word.DisplayAlerts = 0
+            try:
+                self.word.AutomationSecurity = 3
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"Khong the khoi dong phien Word COM: {e}")
+            self.word = None
+        return self
+
+    def convert(self, input_path: str, output_pdf_path: str) -> bool:
+        if not self.word:
+            return convert_word_to_pdf_com(input_path, output_pdf_path)
+        try:
+            doc = self.word.Documents.Open(os.path.abspath(input_path), ReadOnly=True)
+            doc.ExportAsFixedFormat(
+                OutputFileName=os.path.abspath(output_pdf_path),
+                ExportFormat=17,
+                OpenAfterExport=False,
+                OptimizeFor=0
+            )
+            doc.Close(SaveChanges=False)
+            return True
+        except Exception as e:
+            logger.error(f"Loi chuyen Word trong batch session: {e}")
+            # Fallback sang convert don le hoac LibreOffice
+            if convert_office_via_libreoffice(input_path, output_pdf_path):
+                return True
+            return False
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.word:
+            try:
+                self.word.Quit()
+            except Exception:
+                pass
+            self.word = None
+        if self._pythoncom:
+            try:
+                self._pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+class ExcelBatchConverter:
+    """Giu phien lam viec Excel COM mo san de chuyen doi nhieu file Excel lien tiep"""
+    def __init__(self):
+        self.excel = None
+        self._pythoncom = None
+
+    def __enter__(self):
+        try:
+            import win32com.client
+            import pythoncom
+            self._pythoncom = pythoncom
+            self._pythoncom.CoInitialize()
+            self.excel = win32com.client.DispatchEx("Excel.Application")
+            self.excel.Visible = False
+            self.excel.DisplayAlerts = False
+            try:
+                self.excel.AutomationSecurity = 3
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"Khong the khoi dong phien Excel COM: {e}")
+            self.excel = None
+        return self
+
+    def convert(self, input_path: str, output_pdf_path: str) -> bool:
+        if not self.excel:
+            return convert_excel_to_pdf_com(input_path, output_pdf_path)
+        try:
+            wb = self.excel.Workbooks.Open(os.path.abspath(input_path), ReadOnly=True)
+            wb.ExportAsFixedFormat(0, os.path.abspath(output_pdf_path))
+            wb.Close(SaveChanges=False)
+            return True
+        except Exception as e:
+            logger.error(f"Loi chuyen Excel trong batch session: {e}")
+            if convert_office_via_libreoffice(input_path, output_pdf_path):
+                return True
+            return False
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.excel:
+            try:
+                self.excel.Quit()
+            except Exception:
+                pass
+            self.excel = None
+        if self._pythoncom:
+            try:
+                self._pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
 def parse_page_ranges(range_str: str, total_pages: int) -> List[int]:
     """

@@ -6,11 +6,17 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("print_manager.printer")
 
-def list_windows_printers() -> List[Dict[str, Any]]:
+_CACHED_PRINTERS = None
+
+def list_windows_printers(force_refresh: bool = False) -> List[Dict[str, Any]]:
     """
-    Lay danh sach tat ca may in dang co tren Windows.
+    Lay danh sach tat ca may in dang co tren Windows (co cache de may yeu khong bi do khi quet).
     Uu tien dung win32print, neu chua co se fallback qua PowerShell Get-Printer.
     """
+    global _CACHED_PRINTERS
+    if not force_refresh and _CACHED_PRINTERS is not None:
+        return _CACHED_PRINTERS
+
     printers = []
     try:
         import win32print
@@ -26,6 +32,7 @@ def list_windows_printers() -> List[Dict[str, Any]]:
                 "is_default": is_default,
                 "comment": comment or ""
             })
+        _CACHED_PRINTERS = printers
         return printers
     except Exception as e:
         logger.warning(f"Loi doc win32print, chuyen sang PowerShell: {e}")
@@ -51,6 +58,7 @@ def list_windows_printers() -> List[Dict[str, Any]]:
     except Exception as ps_err:
         logger.error(f"Loi lay danh sach may in qua PowerShell: {ps_err}")
 
+    _CACHED_PRINTERS = printers
     return printers
 
 def build_sumatra_print_settings(
@@ -145,14 +153,21 @@ def apply_devmode_settings(printer_name: str, duplex: int = 1, color: int = 0, p
         logger.warning(f"Khong the set DEVMODE cho {printer_name}: {e}")
     return None
 
+_CACHED_SUMATRA_PATH = None
+
 def find_or_extract_sumatra(custom_path: str = None) -> str:
     """
     Tim duong dan thuc te cua SumatraPDF.exe theo thu tu uu tien.
     Tu dong tim trong bundle PyInstaller, thu muc exe, thu muc tools hoac AppData.
     Neu hoan toan chua co, tu dong tai ve thu muc AppData de su dung ngay lap tuc.
     """
+    global _CACHED_SUMATRA_PATH
+    if not custom_path and _CACHED_SUMATRA_PATH and os.path.exists(_CACHED_SUMATRA_PATH):
+        return _CACHED_SUMATRA_PATH
+
     candidates = []
     if custom_path and os.path.exists(custom_path) and os.path.getsize(custom_path) > 100000:
+        _CACHED_SUMATRA_PATH = custom_path
         return custom_path
 
     # 1. Thu muc PyInstaller bundle
@@ -187,6 +202,7 @@ def find_or_extract_sumatra(custom_path: str = None) -> str:
 
     for p in candidates:
         if p and os.path.exists(p) and os.path.getsize(p) > 100000:
+            _CACHED_SUMATRA_PATH = p
             return p
 
     # Neu chua co bat cu dau, thu tu dong tai ve AppData
@@ -471,3 +487,51 @@ def create_sample_test_pdf(output_pdf_path: str, test_title: str = "Báº¢N IN THá
     doc.save(output_pdf_path)
     doc.close()
     return output_pdf_path
+
+def open_printer_preferences_dialog(printer_name: str) -> bool:
+    """
+    Mo truc tiep bang tuy chon driver may in goc (Printing Preferences - rundll32 printui.dll,PrintUIEntry /e /n)
+    Noi nguoi dung tuy chinh sau cac chuc nang phan cung cao cap:
+    - Bo dap ghim (Finisher / Stapler): Dap 1 ghim, 2 ghim, ghim gap doi booklet saddle stitch
+    - Bo duc lo (Punch): 2 lo, 3 lo, 4 lo
+    - Khay giay ra (Finisher Shift Tray, Proof Tray)
+    - Khay giay vao (Bypass tray, khay giay day Thick paper)
+    """
+    if not printer_name:
+        return False
+    try:
+        cmd = ["rundll32.exe", "printui.dll,PrintUIEntry", "/e", "/n", printer_name]
+        subprocess.Popen(cmd)
+        logger.info(f"Da mo hop thoai Printing Preferences cho may in: {printer_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Loi goi PrintUIEntry cho {printer_name}: {e}")
+
+    try:
+        import win32print
+        import win32con
+        hPrinter = win32print.OpenPrinter(printer_name)
+        try:
+            win32print.DocumentProperties(0, hPrinter, printer_name, None, None, win32con.DM_IN_PROMPT)
+            return True
+        finally:
+            win32print.ClosePrinter(hPrinter)
+    except Exception as doc_err:
+        logger.error(f"Loi mo DocumentProperties: {doc_err}")
+        return False
+
+def open_printer_device_settings_dialog(printer_name: str) -> bool:
+    """
+    Mo bang thuoc tinh may in (Printer Properties - rundll32 printui.dll,PrintUIEntry /p /n)
+    Dung khi can kich hoat phan cung Bo dap ghim (Finisher) trong tab Device Settings neu may tinh chua nhan dien
+    """
+    if not printer_name:
+        return False
+    try:
+        cmd = ["rundll32.exe", "printui.dll,PrintUIEntry", "/p", "/n", printer_name]
+        subprocess.Popen(cmd)
+        logger.info(f"Da mo hop thoai Printer Properties cho may in: {printer_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Loi goi PrintUIEntry /p cho {printer_name}: {e}")
+        return False

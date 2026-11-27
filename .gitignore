@@ -7,7 +7,8 @@ __pycache__/
 build/
 dist/
 *.spec
-release/
+release/*
+!release/QuanLyInAn_Setup_v1.0.0.exe
 tools/SumatraPDF.exe
 tools/*.pdf
 tools/SumatraPDF-settings.txt
