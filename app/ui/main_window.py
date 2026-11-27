@@ -560,12 +560,12 @@ class BackgroundPrintWorker(QThread):
 
     def run(self):
         if self.print_mode == "dialog":
-            is_booklet = (self.job_data.get('duplex') == 3)
             res = open_windows_print_dialog(
                 file_path=self.job_data.get('original_file_path'),
                 pdf_path=self.job_data.get('print_file_path'),
                 printer_name=self.job_data.get('printer_name'),
-                prefer_original_app=not is_booklet
+                prefer_original_app=False,
+                settings_str=self.settings_str
             )
         else:
             # 1. Gui lenh in toi SumatraPDF (in ngam)

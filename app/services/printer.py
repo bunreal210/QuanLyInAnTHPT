@@ -302,137 +302,92 @@ def open_windows_print_dialog(
     file_path: str,
     pdf_path: str = None,
     printer_name: str = None,
-    prefer_original_app: bool = True
+    prefer_original_app: bool = False,
+    settings_str: str = ""
 ) -> Dict[str, Any]:
     """
-    Mo hop thoai in (Print Dialog) cua Windows hoac ung dung goc (Word, Excel)
-    de nguoi dung tu chon may in, Preferences/Properties (khay giay, 2 mat, booklet, v.v.):
-    - Neu la Word (.docx, .doc): Mo truc tiep hop thoai in cua Microsoft Word neu may co Word
-    - Neu la Excel (.xlsx, .xls): Mo truc tiep hop thoai in cua Microsoft Excel neu may co Excel
-    - Neu la PDF hoac khong co Word/Excel: Mo hop thoai in chuan cua Windows qua SumatraPDF (-print-dialog)
-    - Fallback: Goi Windows ShellExecute 'print'
+    Mo hop thoai in (Print Dialog) cua Windows de nguoi dung tu chon may in,
+    Preferences/Properties (khay giay, 2 mat, booklet, v.v.):
+    - Su dung SumatraPDF voi tham so -print-dialog (tuyet doi KHONG kem -print-to vi se bi in ngam mat cua so)
+    - Tu dong dua cua so Print Dialog len Foreground (phia truoc ung dung)
     """
     abs_orig = os.path.abspath(file_path) if file_path and os.path.exists(file_path) else None
     abs_pdf = os.path.abspath(pdf_path) if pdf_path and os.path.exists(pdf_path) else None
     ext = os.path.splitext(file_path)[1].lower() if file_path else ""
 
-    # 1. Thu mo hop thoai in goc cua Word (neu prefer_original_app va la file Word)
-    if prefer_original_app and ext in [".docx", ".doc"] and abs_orig:
-        try:
-            import win32com.client
-            import pythoncom
-            pythoncom.CoInitialize()
-            word = win32com.client.DispatchEx("Word.Application")
-            word.Visible = True
-            doc = word.Documents.Open(abs_orig, ReadOnly=True)
-            if printer_name:
-                try:
-                    word.ActivePrinter = printer_name
-                except Exception:
-                    pass
-            # wdDialogFilePrint = 88
-            dialog = word.Dialogs(88)
-            ret = dialog.Show()
-            try:
-                doc.Close(SaveChanges=False)
-                word.Quit()
-            except Exception:
-                pass
-            pythoncom.CoUninitialize()
-            if ret == -1: # In Word, -1 nghia la nguoi dung da bam In / OK
-                return {
-                    "success": True,
-                    "command": "Word.Application.Dialogs(88).Show()",
-                    "message": "Đã gửi lệnh in từ cửa sổ Microsoft Word thành công."
-                }
-            else:
-                return {
-                    "success": False,
-                    "cancelled": True,
-                    "error": "Người dùng đã đóng hoặc hủy in trong cửa sổ Word."
-                }
-        except Exception as word_err:
-            logger.warning(f"Khong the mo hop thoai in Word: {word_err}")
-
-    # 2. Thu mo hop thoai in goc cua Excel (neu prefer_original_app va la file Excel)
-    if prefer_original_app and ext in [".xlsx", ".xls"] and abs_orig:
-        try:
-            import win32com.client
-            import pythoncom
-            pythoncom.CoInitialize()
-            excel = win32com.client.DispatchEx("Excel.Application")
-            excel.Visible = True
-            wb = excel.Workbooks.Open(abs_orig, ReadOnly=True)
-            if printer_name:
-                try:
-                    excel.ActivePrinter = printer_name
-                except Exception:
-                    pass
-            # xlDialogPrint = 9
-            dialog = excel.Dialogs(9)
-            ret = dialog.Show()
-            try:
-                wb.Close(SaveChanges=False)
-                excel.Quit()
-            except Exception:
-                pass
-            pythoncom.CoUninitialize()
-            if ret:
-                return {
-                    "success": True,
-                    "command": "Excel.Application.Dialogs(9).Show()",
-                    "message": "Đã gửi lệnh in từ cửa sổ Microsoft Excel thành công."
-                }
-            else:
-                return {
-                    "success": False,
-                    "cancelled": True,
-                    "error": "Người dùng đã đóng hoặc hủy in trong cửa sổ Excel."
-                }
-        except Exception as excel_err:
-            logger.warning(f"Khong the mo hop thoai in Excel: {excel_err}")
-
-    # 3. Mo hop thoai in Windows Print Dialog thong qua SumatraPDF (-print-dialog)
     target_pdf = abs_pdf or (abs_orig if ext == ".pdf" else None)
-    if target_pdf and os.path.exists(target_pdf):
-        sumatra_exe = find_or_extract_sumatra()
-        if sumatra_exe and os.path.exists(sumatra_exe):
-            cmd = [sumatra_exe]
-            if printer_name:
-                cmd.extend(["-print-to", printer_name])
-            cmd.extend(["-print-dialog", target_pdf])
-            try:
-                logger.info(f"Mo hop thoai in Windows qua SumatraPDF: {' '.join(cmd)}")
-                proc = subprocess.Popen(cmd)
-                proc.wait(timeout=180)
-                return {
-                    "success": True,
-                    "command": " ".join(cmd),
-                    "message": "Đã mở cửa sổ in Windows (Print Dialog) thành công."
-                }
-            except Exception as sum_err:
-                logger.warning(f"Loi goi SumatraPDF -print-dialog: {sum_err}")
+    if not target_pdf or not os.path.exists(target_pdf):
+        return {
+            "success": False,
+            "error": "Không tìm thấy file PDF hợp lệ để mở cửa sổ in."
+        }
 
-    # 4. Phuong an cuoi: Windows ShellExecute print
-    if abs_orig:
+    sumatra_exe = find_or_extract_sumatra()
+    if not sumatra_exe or not os.path.exists(sumatra_exe):
+        return {
+            "success": False,
+            "error": "Không tìm thấy công cụ SumatraPDF.exe để mở cửa sổ in."
+        }
+
+    # Luu y quan trong: Tuyet doi khong truyen -print-to vi SumatraPDF se in ngam truc tiep va bo qua cua so dialog!
+    cmd = [sumatra_exe, "-print-dialog"]
+    if settings_str:
+        cmd.extend(["-print-settings", settings_str])
+    cmd.append(target_pdf)
+
+    try:
+        logger.info(f"Mo hop thoai in Windows qua SumatraPDF: {' '.join(cmd)}")
+        proc = subprocess.Popen(cmd)
+
+        # Cho 0.3 giay de cua so Print Dialog cua Windows xuat hien va dua len Foreground
+        time.sleep(0.3)
         try:
-            import win32api
-            win32api.ShellExecute(0, "print", abs_orig, None, ".", 1)
+            import win32gui
+            import win32process
+            import win32con
+
+            def _bring_to_front(hwnd, _):
+                if win32gui.IsWindowVisible(hwnd):
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    if pid == proc.pid:
+                        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                        win32gui.SetForegroundWindow(hwnd)
+                        win32gui.BringWindowToTop(hwnd)
+                return True
+
+            win32gui.EnumWindows(_bring_to_front, None)
+        except Exception:
+            pass
+
+        ret = proc.wait(timeout=300)
+        if ret == 0:
             return {
                 "success": True,
-                "command": f"ShellExecute print {abs_orig}",
-                "message": f"Đã gửi file tới lệnh in Windows: {os.path.basename(abs_orig)}"
+                "command": " ".join(cmd),
+                "message": "Đã gửi lệnh in từ cửa sổ Windows Print Dialog thành công."
             }
-        except Exception as shell_err:
+        else:
             return {
                 "success": False,
-                "error": f"Không thể mở cửa sổ in: {shell_err}"
+                "cancelled": True,
+                "error": "Người dùng đã đóng hoặc hủy in trong cửa sổ in Windows."
             }
-
-    return {
-        "success": False,
-        "error": "Không tìm thấy file hợp lệ để in."
-    }
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return {
+            "success": False,
+            "cancelled": True,
+            "error": "Hết thời gian chờ thao tác trên cửa sổ in Windows (quá 5 phút)."
+        }
+    except Exception as sum_err:
+        logger.warning(f"Loi goi SumatraPDF -print-dialog: {sum_err}")
+        return {
+            "success": False,
+            "error": f"Lỗi mở cửa sổ in Windows: {sum_err}"
+        }
 
 def create_sample_test_pdf(output_pdf_path: str, test_title: str = "BẢN IN THỬ NGHIỆM") -> str:
     """
