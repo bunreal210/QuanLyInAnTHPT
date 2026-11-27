@@ -2019,11 +2019,12 @@ class MainWindow(QMainWindow):
 
     def execute_windows_dialog_print(self):
         """
-        Mo hop thoai in chuan cua Windows (QPrintDialog).
-        Sau khi nguoi dung bam IN trong Windows:
-        1. Lay toan bo summary setting thuc te (So ban in, 2 mat/1 mat, kho giay, mau sac, may in, trang in).
-        2. Tinh toan lai so to va thanh tien chuan xac theo thiet lap tu Windows.
-        3. Ghi so nhat ky va gui lenh in truc tiep.
+        Mo hop thoai in goc cua Windows.
+        Sau khi nguoi dung bam IN tren cua so Windows:
+        1. Tu dong lay toan bo thuoc tinh in thuc te: May in, So ban in, Che do 2 mat, Mau sac, Kho giay, Khoang trang.
+        2. Cap nhat nguoc lai toan bo cac truong cau hinh tren giao dien chinh cua App de dong bo.
+        3. Tinh toan lai so to va thanh tien tu dong theo bang gia.
+        4. Thuc hien in qua may in, ghi so nhat ky SQLite va dong bo ngay lap tuc vao file Excel.
         """
         if self.selected_file_index < 0 or self.selected_file_index >= len(self.current_queue):
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn một file trong hàng đợi trước!")
@@ -2039,104 +2040,79 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Cảnh báo", "Vui lòng chọn Người yêu cầu (giáo viên hoặc lớp)!")
             return
 
-        # 1. Trích xuất khoảng trang nếu có
         src_pdf = item.get('pdf_path')
-        range_str = self.txt_page_range.text().strip()
-        item_pages = item.get('pages', 1)
-        selected_pages = parse_page_ranges(range_str, item_pages) if item_pages else [1]
+        total_pages = item.get('pages', 1)
 
-        ready_pdf = src_pdf
-        if src_pdf and os.path.exists(src_pdf):
-            if len(selected_pages) < item_pages:
-                custom_range_pdf = os.path.splitext(src_pdf)[0] + "_range.pdf"
-                extract_pages_to_new_pdf(src_pdf, custom_range_pdf, selected_pages)
-                ready_pdf = custom_range_pdf
+        # 1. Mo cua so in goc cua Windows (PrintDlgW)
+        from app.services.printer import show_native_windows_print_dialog, find_or_extract_sumatra, execute_sumatra_print, build_sumatra_print_settings
+        current_printer = self.get_selected_printer_name()
+        current_copies = self.sp_copies.value()
+        current_duplex = self.cb_duplex.currentData()
+        current_color = self.cb_color.currentData()
+        current_paper = self.cb_paper.currentText()
 
-        # 2. Xử lý in Booklet nếu người dùng chọn
-        duplex_val = self.cb_duplex.currentData()
-        paper = self.cb_paper.currentText()
-        color = self.cb_color.currentData()
-        is_booklet = (duplex_val == 3)
+        dlg_result = show_native_windows_print_dialog(
+            parent_hwnd=int(self.winId()),
+            current_printer=current_printer,
+            current_copies=current_copies,
+            current_duplex=current_duplex,
+            current_color=current_color,
+            current_paper=current_paper,
+            total_pages=total_pages
+        )
 
-        if is_booklet:
-            if ready_pdf and os.path.exists(ready_pdf):
-                booklet_pdf = os.path.splitext(ready_pdf)[0] + "_booklet.pdf"
-                try:
-                    create_booklet_pdf(ready_pdf, booklet_pdf, target_paper=paper)
-                    ready_pdf = booklet_pdf
-                except Exception as b_err:
-                    QMessageBox.critical(self, "Lỗi tạo Booklet", f"Không thể dàn trang Booklet: {b_err}")
-                    return
-
-        # 3. Khởi tạo QPrinter với các thiết lập hiện tại trên ứng dụng làm mặc định ban đầu
-        printer = QPrinter(QPrinter.HighResolution)
-        current_printer_name = self.get_selected_printer_name()
-        if current_printer_name:
-            printer.setPrinterName(current_printer_name)
-
-        init_copies = self.sp_copies.value()
-        printer.setCopyCount(max(1, init_copies))
-
-        if is_booklet:
-            printer.setDuplex(QPrinter.DuplexShortSide)
-        elif duplex_val in (1, 2):
-            printer.setDuplex(QPrinter.DuplexLongSide if duplex_val == 1 else QPrinter.DuplexShortSide)
-        else:
-            printer.setDuplex(QPrinter.DuplexNone)
-
-        printer.setColorMode(QPrinter.Color if color == 1 else QPrinter.GrayScale)
-
-        # 4. Mở cửa sổ in chuẩn của Windows (QPrintDialog)
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle(f"Cửa sổ in Windows - {item['file_name']}")
-
-        # Nếu người dùng bấm Cancel hoặc đóng cửa sổ -> Hủy bỏ, không in và không trừ tiền
-        if dialog.exec() != QPrintDialog.Accepted:
-            self.status_bar_label.setText("ℹ️ Người dùng đã hủy in trong cửa sổ Windows.")
+        # Neu nguoi dung bam Cancel hoac dong cua so Windows -> Huy an toan
+        if dlg_result is None:
+            self.status_bar_label.setText("ℹ️ Người dùng đã hủy hoặc đóng cửa sổ in Windows.")
             return
 
-        # 5. LẤY TOÀN BỘ SUMMARY SETTINGS THỰC TẾ TỪ WINDOWS SAU KHI BẤM IN
-        chosen_printer = printer.printerName()
-        chosen_copies = max(1, printer.copyCount())
+        # 2. TRÍCH XUẤT CÁC THÔNG SỐ VỪA ĐƯỢC CHỌN TỪ WINDOWS
+        chosen_printer = dlg_result.get('printer_name') or current_printer
+        chosen_copies = max(1, dlg_result.get('copies', 1))
+        final_duplex = dlg_result.get('duplex', current_duplex)
+        final_color = dlg_result.get('color', current_color)
+        final_paper = dlg_result.get('paper', current_paper)
+        final_range = dlg_result.get('page_range', '')
+        is_booklet = (final_duplex == 3)
 
-        # Nhận diện Duplex từ Windows
-        qt_duplex = printer.duplex()
-        if is_booklet:
-            final_duplex = 3  # Giữ nguyên chế độ Booklet
-        elif qt_duplex in [QPrinter.DuplexLongSide, QPrinter.DuplexAuto]:
-            final_duplex = 1  # 2 mặt lật cạnh dài
-        elif qt_duplex == QPrinter.DuplexShortSide:
-            final_duplex = 2  # 2 mặt lật cạnh ngắn
+        # 3. TỰ ĐỘNG ĐỒNG BỘ CẤU HÌNH NGƯỢC LẠI GIAO DIỆN CỦA APP
+        # Cap nhat May in
+        idx_pr = self.cb_printers.findText(chosen_printer)
+        if idx_pr >= 0:
+            self.cb_printers.setCurrentIndex(idx_pr)
         else:
-            final_duplex = 0  # 1 mặt
+            self.cb_printers.addItem(chosen_printer)
+            self.cb_printers.setCurrentText(chosen_printer)
 
-        # Nhận diện Color từ Windows
-        final_color = 1 if printer.colorMode() == QPrinter.Color else 0
+        # Cap nhat So ban in
+        self.sp_copies.setValue(chosen_copies)
 
-        # Nhận diện Khổ giấy từ Windows
-        try:
-            page_name = printer.pageLayout().pageSize().name().upper()
-        except Exception:
-            page_name = "A4"
-        final_paper = "A3" if "A3" in page_name else "A4"
+        # Cap nhat Kho giay
+        idx_paper = self.cb_paper.findText(final_paper)
+        if idx_paper >= 0:
+            self.cb_paper.setCurrentIndex(idx_paper)
 
-        # Nhận diện Khoảng trang từ Windows
-        doc = fitz.open(ready_pdf)
-        total_doc_pages = len(doc)
-        start_idx = 0
-        end_idx = total_doc_pages
-        page_range_desc = range_str if range_str else "Toàn bộ"
+        # Cap nhat Che do in (Duplex)
+        idx_dup = self.cb_duplex.findData(final_duplex)
+        if idx_dup >= 0:
+            self.cb_duplex.setCurrentIndex(idx_dup)
 
-        if printer.printRange() == QPrinter.PageRange:
-            from_p = max(1, printer.fromPage())
-            to_p = min(total_doc_pages, printer.toPage())
-            if from_p <= to_p:
-                start_idx = from_p - 1
-                end_idx = to_p
-                page_range_desc = f"{from_p}-{to_p}"
-        actual_pages_printed = max(1, end_idx - start_idx)
+        # Cap nhat Mau sac
+        idx_col = self.cb_color.findData(final_color)
+        if idx_col >= 0:
+            self.cb_color.setCurrentIndex(idx_col)
 
-        # 6. TÍNH TOÁN TIỀN CHÍNH XÁC DỰA TRÊN SETTINGS THỰC TẾ TỪ WINDOWS
+        # Cap nhat Khoang trang
+        self.txt_page_range.setText(final_range)
+
+        # 4. TÍNH TOÁN LẠI SỐ TRANG, SỐ TỜ VÀ THÀNH TIỀN TỰ ĐỘNG
+        if final_range:
+            selected_pages = parse_page_ranges(final_range, total_pages)
+            actual_pages_printed = len(selected_pages)
+        else:
+            selected_pages = list(range(1, total_pages + 1))
+            actual_pages_printed = total_pages
+
         cost_info = calculate_print_cost(
             pages_count=actual_pages_printed,
             copies=chosen_copies,
@@ -2157,11 +2133,31 @@ class MainWindow(QMainWindow):
             amount_override = float(self.sp_override_amount.value())
             final_amount = amount_override
 
-        # Cập nhật ngược lại giao diện số bản in và thành tiền thực tế
-        self.sp_copies.setValue(chosen_copies)
+        # Cap nhat tong ket thanh tien len giao dien
         self.lbl_cost_summary.setText(f"Tổng: {cost_info['total_sheets']} tờ | {final_amount:,.0f} đ")
+        self.lbl_sheets_calc.setText(f"{cost_info['total_sheets']:,} tờ ({actual_pages_printed} trang x {chosen_copies} bản)")
+        self.lbl_calc_amount.setText(f"{final_amount:,.0f} đ")
 
-        # 7. Lưu bản sao lưu trữ theo Mục 5.4
+        # 5. XỬ LÝ FILE PDF CẦN IN (Cắt khoảng trang / Booklet nếu có)
+        ready_pdf = src_pdf
+        if final_range and len(selected_pages) < total_pages:
+            custom_range_pdf = os.path.splitext(src_pdf)[0] + "_range.pdf"
+            extract_pages_to_new_pdf(src_pdf, custom_range_pdf, selected_pages)
+            ready_pdf = custom_range_pdf
+
+        if is_booklet:
+            booklet_pdf = os.path.splitext(ready_pdf)[0] + "_booklet.pdf"
+            try:
+                create_booklet_pdf(ready_pdf, booklet_pdf, target_paper=final_paper)
+                ready_pdf = booklet_pdf
+                duplex_for_printer = 2
+            except Exception as b_err:
+                QMessageBox.critical(self, "Lỗi tạo Booklet", f"Không thể dàn trang Booklet: {b_err}")
+                return
+        else:
+            duplex_for_printer = final_duplex
+
+        # 6. LƯU BẢN SAO THEO MỤC 5.4
         saved_orig, saved_pdf = organize_and_save_files(
             original_file_path=item['original_path'],
             converted_pdf_path=ready_pdf,
@@ -2171,7 +2167,7 @@ class MainWindow(QMainWindow):
             title=item['file_name']
         )
 
-        # 8. Ghi nhật ký vào SQLite & Excel với đầy đủ thông số Windows
+        # 7. GHI NHẬT KÝ VÀO SQLITE & ĐỒNG BỘ VÀO EXCEL
         job_data = {
             "requester_id": req_data['id'],
             "related_classes": self.txt_related_classes.text().strip(),
@@ -2179,7 +2175,7 @@ class MainWindow(QMainWindow):
             "file_type": item['ext'].replace(".", ""),
             "original_file_path": item['original_path'],
             "pages": actual_pages_printed,
-            "page_range": page_range_desc,
+            "page_range": final_range if final_range else "Toàn bộ",
             "copies": chosen_copies,
             "sheets": cost_info['total_sheets'],
             "printer_name": chosen_printer,
@@ -2201,58 +2197,47 @@ class MainWindow(QMainWindow):
 
         job_id = create_print_job(job_data)
         append_job_to_excel_async(job_id)
+        self.mark_history_and_reports_dirty()
+        self.update_recent_requester_buttons()
 
-        # 9. Gửi dữ liệu in ra máy in thông qua QPainter (kế thừa chính xác DEVMODE cấu hình của Windows)
-        print_success = False
-        try:
-            self.status_bar_label.setText(f"⏳ Đang gửi dữ liệu in tới máy in [{chosen_printer}]...")
-            QApplication.processEvents()
-            painter = QPainter(printer)
-            for idx in range(start_idx, end_idx):
-                if idx > start_idx:
-                    printer.newPage()
-                p_page = doc[idx]
-                pix = p_page.get_pixmap(dpi=300)
-                qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
-                target_rect = painter.viewport()
-                painter.drawImage(target_rect, qimg)
-            painter.end()
-            print_success = True
-        except Exception as paint_err:
-            logger.warning(f"QPainter loi: {paint_err}, fallback qua SumatraPDF")
+        # 8. GỬI LỆNH IN QUA SUMATRAPDF (VỚI CÁC THIẾT LẬP THỰC TẾ TỪ WINDOWS)
+        sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
+        settings_str = build_sumatra_print_settings(
+            copies=chosen_copies,
+            duplex=duplex_for_printer,
+            color=final_color,
+            paper=final_paper,
+            collate=True
+        )
 
-        doc.close()
+        self.status_bar_label.setText(f"⏳ Đang gửi file in tới máy in [{chosen_printer}]...")
+        QApplication.processEvents()
 
-        # Fallback nếu QPainter không in được (ví dụ driver máy in cũ đặc thù)
-        if not print_success:
-            from app.services.printer import execute_sumatra_print, find_or_extract_sumatra
-            sumatra_exe = find_or_extract_sumatra(get_setting("sumatra_path"))
-            duplex_str = "duplex" if final_duplex in (1, 2) else "simplex"
-            if is_booklet or final_duplex == 2:
-                duplex_str = "duplexshort"
-            color_str = "color" if final_color == 1 else "monochrome"
-            s_settings = f"{chosen_copies}x,paper={final_paper},{duplex_str},{color_str}"
-            execute_sumatra_print(sumatra_exe, chosen_printer, ready_pdf, s_settings)
+        execute_sumatra_print(
+            sumatra_exe,
+            chosen_printer,
+            ready_pdf,
+            settings_str
+        )
 
-        # 10. Hiển thị thông báo tổng kết rõ ràng chi tiết
-        duplex_name = "2 mặt (Lật cạnh dài)" if final_duplex == 1 else ("2 mặt (Lật cạnh ngắn)" if final_duplex == 2 else ("📖 In Booklet" if final_duplex == 3 else "1 mặt"))
+        # 9. THÔNG BÁO TỔNG KẾT
+        duplex_names = {0: "1 mặt", 1: "2 mặt (Lật cạnh dài)", 2: "2 mặt (Lật cạnh ngắn)", 3: "📖 In Booklet"}
         color_name = "In màu" if final_color == 1 else "Đen trắng"
 
         msg = (
             f"🎉 ĐÃ IN THÀNH CÔNG VỚI THIẾT LẬP TỪ WINDOWS (Lượt #{job_id})!\n\n"
-            f"📋 THÔNG TIN THỰC TẾ TỪ CỬA SỔ IN WINDOWS:\n"
+            f"📋 THUỘC TÍNH IN THỰC TẾ TỪ CỬA SỔ WINDOWS:\n"
             f"• Máy in đã chọn: {chosen_printer}\n"
             f"• Số bản in (Copies): {chosen_copies} bản\n"
-            f"• Khổ giấy & Chế độ: {final_paper} | {duplex_name} | {color_name}\n"
-            f"• Số trang: {actual_pages_printed} trang ({page_range_desc})\n"
+            f"• Khổ giấy & Chế độ: {final_paper} | {duplex_names.get(final_duplex, '1 mặt')} | {color_name}\n"
+            f"• Số trang: {actual_pages_printed} trang ({final_range if final_range else 'Toàn bộ'})\n\n"
+            f"💰 KẾT QUẢ TÍNH TIỀN TỰ ĐỘNG:\n"
             f"• Tổng số tờ giấy thực tế: {cost_info['total_sheets']} tờ\n"
             f"• Đơn giá áp dụng: {cost_info['unit_price']:,.0f} đ\n"
             f"• THÀNH TIỀN: {final_amount:,.0f} đ\n\n"
-            f"✅ Đã ghi sổ nhật ký và đồng bộ vào file Excel!"
+            f"📁 Đã cập nhật cấu hình giao diện, ghi sổ nhật ký và đồng bộ vào file Excel!"
         )
-        QMessageBox.information(self, "In thành công", msg)
-        self.mark_history_and_reports_dirty()
-        self.update_recent_requester_buttons()
+        QMessageBox.information(self, "In thành công & Đã tính tiền", msg)
 
     def execute_save_only(self):
         self._process_job(mode="save_only")

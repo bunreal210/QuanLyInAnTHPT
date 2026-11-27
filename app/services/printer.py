@@ -491,3 +491,259 @@ def open_printer_device_settings_dialog(printer_name: str) -> bool:
     except Exception as e:
         logger.error(f"Loi goi PrintUIEntry /p cho {printer_name}: {e}")
         return False
+
+
+# ==============================================================================
+# NATIVE WINDOWS PRINT DIALOG (PrintDlgW)
+# ==============================================================================
+import ctypes
+from ctypes import wintypes
+
+class PRINTDLGW(ctypes.Structure):
+    _fields_ = [
+        ('lStructSize', wintypes.DWORD),
+        ('hwndOwner', wintypes.HWND),
+        ('hDevMode', wintypes.HGLOBAL),
+        ('hDevNames', wintypes.HGLOBAL),
+        ('hDC', wintypes.HDC),
+        ('Flags', wintypes.DWORD),
+        ('nFromPage', wintypes.WORD),
+        ('nToPage', wintypes.WORD),
+        ('nMinPage', wintypes.WORD),
+        ('nMaxPage', wintypes.WORD),
+        ('nCopies', wintypes.WORD),
+        ('hInstance', wintypes.HINSTANCE),
+        ('lCustData', wintypes.LPARAM),
+        ('lpfnPrintHook', wintypes.LPVOID),
+        ('lpfnSetupHook', wintypes.LPVOID),
+        ('lpPrintTemplateName', wintypes.LPCWSTR),
+        ('lpSetupTemplateName', wintypes.LPCWSTR),
+        ('hPrintTemplate', wintypes.HGLOBAL),
+        ('hSetupTemplate', wintypes.HGLOBAL),
+    ]
+
+class DEVMODEW(ctypes.Structure):
+    _fields_ = [
+        ('dmDeviceName', wintypes.WCHAR * 32),
+        ('dmSpecVersion', wintypes.WORD),
+        ('dmDriverVersion', wintypes.WORD),
+        ('dmSize', wintypes.WORD),
+        ('dmDriverExtra', wintypes.WORD),
+        ('dmFields', wintypes.DWORD),
+        ('dmOrientation', ctypes.c_short),
+        ('dmPaperSize', ctypes.c_short),
+        ('dmPaperLength', ctypes.c_short),
+        ('dmPaperWidth', ctypes.c_short),
+        ('dmScale', ctypes.c_short),
+        ('dmCopies', ctypes.c_short),
+        ('dmDefaultSource', ctypes.c_short),
+        ('dmPrintQuality', ctypes.c_short),
+        ('dmColor', ctypes.c_short),
+        ('dmDuplex', ctypes.c_short),
+        ('dmYResolution', ctypes.c_short),
+        ('dmTTOption', ctypes.c_short),
+        ('dmCollate', ctypes.c_short),
+        ('dmFormName', wintypes.WCHAR * 32),
+        ('dmLogPixels', wintypes.WORD),
+        ('dmBitsPerPel', wintypes.DWORD),
+        ('dmPelsWidth', wintypes.DWORD),
+        ('dmPelsHeight', wintypes.DWORD),
+        ('dmDisplayFlags', wintypes.DWORD),
+        ('dmDisplayFrequency', wintypes.DWORD),
+        ('dmICMMethod', wintypes.DWORD),
+        ('dmICMIntent', wintypes.DWORD),
+        ('dmMediaType', wintypes.DWORD),
+        ('dmDitherType', wintypes.DWORD),
+        ('dmReserved1', wintypes.DWORD),
+        ('dmReserved2', wintypes.DWORD),
+        ('dmPanningWidth', wintypes.DWORD),
+        ('dmPanningHeight', wintypes.DWORD),
+    ]
+
+class DEVNAMES(ctypes.Structure):
+    _fields_ = [
+        ('wDriverOffset', wintypes.WORD),
+        ('wDeviceOffset', wintypes.WORD),
+        ('wOutputOffset', wintypes.WORD),
+        ('wDefault', wintypes.WORD),
+    ]
+
+def _make_native_devnames(device: str, driver: str = "winspool", output: str = ""):
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+
+    hdr_size = ctypes.sizeof(DEVNAMES)
+    w_hdr = hdr_size // 2
+    w_drv = w_hdr
+    w_dev = w_drv + len(driver) + 1
+    w_out = w_dev + len(device) + 1
+    total_chars = w_out + len(output) + 1
+
+    size = total_chars * 2
+    hMem = kernel32.GlobalAlloc(0x0002, size) # GMEM_MOVEABLE
+    if not hMem:
+        return 0
+    p = kernel32.GlobalLock(hMem)
+    if not p:
+        return 0
+    dn = DEVNAMES.from_address(p)
+    dn.wDriverOffset = w_drv
+    dn.wDeviceOffset = w_dev
+    dn.wOutputOffset = w_out
+    dn.wDefault = 0
+
+    ptr_drv = p + w_drv * 2
+    ptr_dev = p + w_dev * 2
+    ptr_out = p + w_out * 2
+    ctypes.memmove(ptr_drv, ctypes.c_wchar_p(driver), (len(driver) + 1) * 2)
+    ctypes.memmove(ptr_dev, ctypes.c_wchar_p(device), (len(device) + 1) * 2)
+    ctypes.memmove(ptr_out, ctypes.c_wchar_p(output), (len(output) + 1) * 2)
+    kernel32.GlobalUnlock(hMem)
+    return hMem
+
+def _make_native_devmode(device: str, copies: int = 1, duplex: int = 1, color: int = 0, paper: str = "A4"):
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+
+    hMem = kernel32.GlobalAlloc(0x0002, ctypes.sizeof(DEVMODEW))
+    if not hMem:
+        return 0
+    p = kernel32.GlobalLock(hMem)
+    if not p:
+        return 0
+    dm = DEVMODEW.from_address(p)
+    dm.dmSize = ctypes.sizeof(DEVMODEW)
+    dm.dmDeviceName = str(device)[:31]
+    dm.dmCopies = max(1, copies)
+    dm.dmDuplex = 2 if duplex == 1 else (3 if duplex == 2 else 1)
+    dm.dmColor = 2 if color == 1 else 1
+    dm.dmPaperSize = 8 if paper.upper() == "A3" else (11 if paper.upper() == "A5" else 9)
+    dm.dmFields = 0x00000100 | 0x00001000 | 0x00000800 | 0x00000002
+    kernel32.GlobalUnlock(hMem)
+    return hMem
+
+def show_native_windows_print_dialog(
+    parent_hwnd: int = 0,
+    current_printer: str = None,
+    current_copies: int = 1,
+    current_duplex: int = 1,
+    current_color: int = 0,
+    current_paper: str = "A4",
+    total_pages: int = 1
+) -> Optional[Dict[str, Any]]:
+    """
+    Mo hop thoai in goc (Native Windows Print Dialog) bang Windows API PrintDlgW:
+    - Nguoi dung chon may in, so ban in, khoang trang va dac biet co the bam vao Preferences / Properties
+      de tuy chon 2 mat (duplex), mau sac (color), kho giay (A4/A3/A5).
+    - Sau khi nguoi dung bam nut "In" (Print) tren cua so Windows:
+      Ham se doc toan bo DEVMODEW thuc te ma nguoi dung vua chon va tra ve dict thong so.
+    - Neu nguoi dung bam "Huy" (Cancel) hoac dong hop thoai: Tra ve None.
+    """
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+
+    comdlg32 = ctypes.windll.comdlg32
+
+    pd = PRINTDLGW()
+    pd.lStructSize = ctypes.sizeof(PRINTDLGW)
+    pd.hwndOwner = parent_hwnd or 0
+    # PD_ALLPAGES | PD_USEDEVMODECOPIESANDCOLLATE | PD_HIDEPRINTTOFILE | PD_NOSELECTION
+    pd.Flags = 0x00000000 | 0x00040000 | 0x00100000 | 0x00000004
+    pd.nMinPage = 1
+    pd.nMaxPage = max(1, total_pages)
+    pd.nFromPage = 1
+    pd.nToPage = max(1, total_pages)
+    pd.nCopies = max(1, current_copies)
+
+    if current_printer:
+        pd.hDevNames = _make_native_devnames(current_printer)
+        pd.hDevMode = _make_native_devmode(current_printer, current_copies, current_duplex, current_color, current_paper)
+
+    ret = comdlg32.PrintDlgW(ctypes.byref(pd))
+    if not ret:
+        if pd.hDevNames:
+            kernel32.GlobalFree(pd.hDevNames)
+        if pd.hDevMode:
+            kernel32.GlobalFree(pd.hDevMode)
+        return None
+
+    result = {}
+    chosen_printer = current_printer or ""
+    if pd.hDevNames:
+        pNames = kernel32.GlobalLock(pd.hDevNames)
+        if pNames:
+            dn = DEVNAMES.from_address(pNames)
+            chosen_printer = ctypes.wstring_at(pNames + dn.wDeviceOffset * 2)
+            kernel32.GlobalUnlock(pd.hDevNames)
+    result['printer_name'] = chosen_printer
+
+    chosen_copies = max(1, int(pd.nCopies or 1))
+    final_duplex = current_duplex
+    final_color = current_color
+    final_paper = current_paper
+
+    if pd.hDevMode:
+        pMode = kernel32.GlobalLock(pd.hDevMode)
+        if pMode:
+            dm = DEVMODEW.from_address(pMode)
+            if dm.dmCopies and dm.dmCopies > 0:
+                chosen_copies = int(dm.dmCopies)
+
+            # Duplex: 1 = simplex, 2 = vertical (lat dai), 3 = horizontal (lat ngan)
+            if dm.dmDuplex == 2:
+                final_duplex = 1 # 2 mat lat dai
+            elif dm.dmDuplex == 3:
+                final_duplex = 2 # 2 mat lat ngan
+            elif dm.dmDuplex == 1:
+                final_duplex = 0 # 1 mat
+
+            # Color: 1 = monochrome, 2 = color
+            if dm.dmColor == 2:
+                final_color = 1 # In mau
+            elif dm.dmColor == 1:
+                final_color = 0 # Den trang
+
+            # Paper: 8 = A3, 11 = A5, 9 = A4
+            form_str = str(dm.dmFormName).upper()
+            if dm.dmPaperSize == 8 or 'A3' in form_str:
+                final_paper = 'A3'
+            elif dm.dmPaperSize == 11 or 'A5' in form_str:
+                final_paper = 'A5'
+            elif dm.dmPaperSize == 9 or 'A4' in form_str:
+                final_paper = 'A4'
+
+            kernel32.GlobalUnlock(pd.hDevMode)
+
+    result['copies'] = chosen_copies
+    result['duplex'] = final_duplex
+    result['color'] = final_color
+    result['paper'] = final_paper
+
+    # Khoang trang (Page range)
+    if pd.Flags & 0x00000002: # PD_PAGENUMS
+        from_p = max(1, int(pd.nFromPage))
+        to_p = min(total_pages, int(pd.nToPage))
+        result['page_range'] = f"{from_p}-{to_p}"
+    else:
+        result['page_range'] = ""
+
+    if pd.hDevNames:
+        kernel32.GlobalFree(pd.hDevNames)
+    if pd.hDevMode:
+        kernel32.GlobalFree(pd.hDevMode)
+
+    return result
+
